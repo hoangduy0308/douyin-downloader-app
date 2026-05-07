@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.1",
+  "feature_slug": "windows-desktop-downloader-ui",
+  "mode": "standard",
+  "active_skill": "planning",
+  "phase": "phase-1-prepared-awaiting-validation",
+  "phase_number": 1,
+  "epic_id": "douyin-downloader-app-irx",
+  "approved_gates": {
+    "context": false,
+    "phase_plan": true,
+    "execution": false,
+    "review": false
+  },
+  "active_beads": [
+    "douyin-downloader-app-irx.1",
+    "douyin-downloader-app-irx.2",
+    "douyin-downloader-app-irx.3",
+    "douyin-downloader-app-irx.4",
+    "douyin-downloader-app-irx.5",
+    "douyin-downloader-app-irx.6",
+    "douyin-downloader-app-irx.7"
+  ],
+  "active_workers": [],
+  "blockers": [],
+  "focus": "history/windows-desktop-downloader-ui/phase-1-story-map.md",
+  "summary": "Phase 1 contract, story map, and beads are prepared. Waiting for khuym:validating before execution.",
+  "next_action": "Invoke khuym:validating for Phase 1.",
+  "deferred_beads": [],
+  "last_compounding_run": {
+    "feature": "",
+    "date": "",
+    "learnings_file": "",
+    "critical_promotions": 0
+  },
+  "last_updated": "2026-05-08T00:00:00.000Z"
+}

@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { BackendStatusCard } from "../components/BackendStatusCard";
-import { JobStatusPlaceholder } from "../components/JobStatusPlaceholder";
+import { JobStatusPanel } from "../components/JobStatusPanel";
 import { OutputFolderControl } from "../components/OutputFolderControl";
 import { SingleDownloadPanel } from "../components/SingleDownloadPanel";
+import type { JobState } from "../services/backendClient";
 import { createBackendClient } from "../services/backendClient";
 import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
+import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
+import { createJobPoller } from "../services/jobPolling";
 import { isTauriRuntimeAvailable, TauriBackendRuntime } from "../services/tauriBackendRuntime";
 
 type Mode = "single" | "batch";
@@ -24,6 +27,10 @@ export function App(): JSX.Element {
   const [submitMessageTone, setSubmitMessageTone] = useState<"error" | "hint">("hint");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobState, setActiveJobState] = useState<JobState | null>(null);
+  const [jobPanelMessage, setJobPanelMessage] = useState<string>("");
+  const [jobPanelTone, setJobPanelTone] = useState<"error" | "hint">("hint");
+  const [jobDiagnostics, setJobDiagnostics] = useState<string[]>([]);
   const backendClient = useMemo(() => createBackendClient({ baseUrl: "http://127.0.0.1:8787" }), []);
 
   const modeDescription = useMemo(() => {
@@ -80,6 +87,49 @@ export function App(): JSX.Element {
     };
   }, [outputPath, configVersion]);
 
+  useEffect(() => {
+    if (!activeJobId) {
+      setActiveJobState(null);
+      return undefined;
+    }
+
+    const poller = createJobPoller({
+      jobId: activeJobId,
+      backendClient,
+      pollIntervalMs: 1000,
+      onJob: (job) => {
+        setActiveJobState(job);
+        if (job.status === "success") {
+          setJobPanelMessage("Download finished successfully.");
+          setJobPanelTone("hint");
+          return;
+        }
+        if (job.status === "failed") {
+          const mapped = mapFailedJobError(job.error);
+          if (!mapped) {
+            return;
+          }
+          setJobPanelMessage(mapped.message);
+          setJobPanelTone("error");
+          setJobDiagnostics((existing) => existing.concat(mapped.diagnostics));
+          return;
+        }
+        setJobPanelMessage("");
+      },
+      onError: (error) => {
+        const mapped = mapPollingRequestError(error);
+        setJobPanelMessage(mapped.message);
+        setJobPanelTone("error");
+        setJobDiagnostics((existing) => existing.concat(mapped.diagnostics));
+      },
+    });
+
+    poller.start();
+    return () => {
+      poller.stop();
+    };
+  }, [activeJobId, backendClient]);
+
   const backendReadyForSubmit = backendStatus === "ready";
   const configReadyForSubmit = configVersion === backendReadyConfigVersion;
   const submitDisabled = !backendReadyForSubmit || !configReadyForSubmit || isSubmitting;
@@ -123,6 +173,9 @@ export function App(): JSX.Element {
     try {
       const response = await backendClient.createDownloadJob({ url: trimmedUrl });
       setActiveJobId(response.jobId);
+      setActiveJobState(null);
+      setJobPanelMessage("");
+      setJobDiagnostics([]);
       setSubmitMessage(`Download queued as ${response.jobId}.`);
       setSubmitMessageTone("hint");
     } catch {
@@ -186,10 +239,18 @@ export function App(): JSX.Element {
           )}
         </section>
 
-        <JobStatusPlaceholder activeJobId={activeJobId} />
+        <JobStatusPanel
+          activeJobId={activeJobId}
+          jobState={activeJobState}
+          message={jobPanelMessage}
+          messageTone={jobPanelTone}
+        />
       </section>
       <div data-testid="backend-diagnostics-cache" hidden>
         {backendDiagnostics.join(" | ")}
+      </div>
+      <div data-testid="job-diagnostics-cache" hidden>
+        {jobDiagnostics.join(" | ")}
       </div>
     </main>
   );

@@ -165,6 +165,15 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+.status-message {
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+.status-message-error {
+  color: #8f1f1f;
+}
+
 .batch-placeholder {
   margin: 0;
   color: #50667b;

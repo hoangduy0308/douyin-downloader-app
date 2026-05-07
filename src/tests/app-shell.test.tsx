@@ -3,18 +3,19 @@ import { vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   createDownloadJobMock: vi.fn(),
+  getJobMock: vi.fn(),
   runtimeAvailable: false,
   lifecycleStartMock: vi.fn(),
 }));
 
 vi.mock("../services/backendClient", () => ({
-  createBackendClient: () => ({
-    health: vi.fn(),
-    createDownloadJob: mocks.createDownloadJobMock,
-    getJob: vi.fn(),
-    listJobs: vi.fn(),
-  }),
-}));
+    createBackendClient: () => ({
+      health: vi.fn(),
+      createDownloadJob: mocks.createDownloadJobMock,
+      getJob: mocks.getJobMock,
+      listJobs: vi.fn(),
+    }),
+  }));
 
 vi.mock("../services/tauriBackendRuntime", () => ({
   isTauriRuntimeAvailable: () => mocks.runtimeAvailable,
@@ -45,8 +46,10 @@ import { App } from "../app/App";
 
 describe("App shell", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     mocks.runtimeAvailable = false;
     mocks.createDownloadJobMock.mockReset();
+    mocks.getJobMock.mockReset();
     mocks.lifecycleStartMock.mockReset();
     mocks.lifecycleStartMock.mockResolvedValue({
       state: "ready",
@@ -120,6 +123,20 @@ describe("App shell", () => {
       jobId: "job-123",
       status: "pending",
     });
+    mocks.getJobMock.mockResolvedValueOnce({
+      jobId: "job-123",
+      status: "pending",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: null,
+      finishedAt: null,
+      counts: {
+        total: 3,
+        success: 0,
+        failed: 0,
+        skipped: 0,
+      },
+      error: null,
+    });
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("Douyin URL"), {
@@ -131,11 +148,13 @@ describe("App shell", () => {
       expect(mocks.createDownloadJobMock).toHaveBeenCalledWith({
         url: "https://www.douyin.com/video/123",
       });
+      });
+      expect(screen.getByText("Download queued as job-123.")).toBeInTheDocument();
+      expect(screen.getByText("Pending")).toBeInTheDocument();
+      expect(screen.getByText("Active job id: job-123")).toBeInTheDocument();
+      expect(screen.getByText("3")).toBeInTheDocument();
+      expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(2);
     });
-    expect(screen.getByText("Download queued as job-123.")).toBeInTheDocument();
-    expect(screen.getByText("Queued")).toBeInTheDocument();
-    expect(screen.getByText("Active job id: job-123")).toBeInTheDocument();
-  });
 
   it("disables submit while backend is not ready", () => {
     mocks.runtimeAvailable = true;
@@ -188,10 +207,87 @@ describe("App shell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Start download" }));
 
+      await waitFor(() => {
+        expect(
+          screen.getByText("Could not submit download. Check backend status and try again."),
+        ).toBeInTheDocument();
+      });
+    });
+
+  it("renders running and success counts from backend polling and stops on terminal status", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "job-poll",
+      status: "pending",
+    });
+    mocks.getJobMock
+      .mockResolvedValueOnce({
+        jobId: "job-poll",
+        status: "running",
+        submittedAt: "2026-05-08T03:00:00Z",
+        startedAt: "2026-05-08T03:00:01Z",
+        finishedAt: null,
+        counts: {
+          total: 5,
+          success: 2,
+          failed: 1,
+          skipped: 0,
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        jobId: "job-poll",
+        status: "success",
+        submittedAt: "2026-05-08T03:00:00Z",
+        startedAt: "2026-05-08T03:00:01Z",
+        finishedAt: "2026-05-08T03:00:03Z",
+        counts: {
+          total: 5,
+          success: 5,
+          failed: 0,
+          skipped: 0,
+        },
+        error: null,
+      });
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Douyin URL"), {
+      target: { value: "https://www.douyin.com/video/polling" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Running")).toBeInTheDocument();
+      expect(screen.getByText("5")).toBeInTheDocument();
+      expect(screen.getByText("2")).toBeInTheDocument();
+      expect(screen.getByText("1")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Success").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText("Download finished successfully.")).toBeInTheDocument();
+    }, { timeout: 2500 });
+    expect(mocks.getJobMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows friendly missing-job message for polling 404 errors and keeps diagnostics separate", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "job-404",
+      status: "pending",
+    });
+    mocks.getJobMock.mockRejectedValueOnce(new Error("404 job missing"));
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Douyin URL"), {
+      target: { value: "https://v.douyin.com/abcdef/" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
     await waitFor(() => {
       expect(
-        screen.getByText("Could not submit download. Check backend status and try again."),
+        screen.getByText("This download job is no longer available. Start the download again."),
       ).toBeInTheDocument();
     });
+    expect(screen.queryByText("job missing")).not.toBeInTheDocument();
+    expect(screen.getByTestId("job-diagnostics-cache")).toHaveTextContent("job missing");
   });
 });

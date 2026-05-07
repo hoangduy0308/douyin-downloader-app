@@ -1,0 +1,185 @@
+:root {
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  color: #17212b;
+  background-color: #f1f4f7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f5f7fa 0%, #eaf0f5 100%);
+}
+
+.app-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  color: #4e5f6f;
+}
+
+.layout-grid {
+  margin-top: 20px;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #c8d4df;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 14px rgba(20, 35, 52, 0.08);
+}
+
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.mode-card {
+  grid-column: span 2;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  border: 1px solid #bccad7;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tab {
+  border: 0;
+  background: #eef3f8;
+  color: #23384f;
+  padding: 8px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: #305f90;
+  color: #ffffff;
+}
+
+.mode-description {
+  margin: 12px 0;
+  color: #3e556c;
+}
+
+.inline-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #b6c5d3;
+  font: inherit;
+}
+
+button {
+  border: 1px solid #2f608e;
+  border-radius: 8px;
+  background: #2f608e;
+  color: #ffffff;
+  padding: 10px 14px;
+  font: inherit;
+  font-weight: 600;
+}
+
+button.secondary {
+  border-color: #9cb0c2;
+  background: #dce5ee;
+  color: #3a5066;
+}
+
+button:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.status-dot.starting {
+  background: #b87913;
+}
+
+.status-dot.ready {
+  background: #247a3f;
+}
+
+.status-dot.error {
+  background: #a12b2b;
+}
+
+.status-dot.stopped {
+  background: #6a7f93;
+}
+
+.counts-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.counts-grid .label {
+  display: block;
+  font-size: 0.8rem;
+  color: #5a6f83;
+}
+
+.hint {
+  margin-top: 10px;
+  color: #5e7285;
+  font-size: 0.9rem;
+}
+
+.batch-placeholder {
+  margin: 0;
+  color: #50667b;
+}
+
+@media (max-width: 900px) {
+  .layout-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-card {
+    grid-column: span 1;
+  }
+
+  .counts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

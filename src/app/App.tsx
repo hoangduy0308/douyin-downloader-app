@@ -1,0 +1,118 @@
+import { useEffect, useMemo, useState } from "react";
+import { BackendStatusCard } from "../components/BackendStatusCard";
+import { JobStatusPlaceholder } from "../components/JobStatusPlaceholder";
+import { OutputFolderControl } from "../components/OutputFolderControl";
+import { SingleDownloadPanel } from "../components/SingleDownloadPanel";
+import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
+import { isTauriRuntimeAvailable, TauriBackendRuntime } from "../services/tauriBackendRuntime";
+
+type Mode = "single" | "batch";
+
+export function App(): JSX.Element {
+  const [mode, setMode] = useState<Mode>("single");
+  const [url, setUrl] = useState("");
+  const [outputPath, setOutputPath] = useState("C:\\DouyinDownloads");
+  const [backendStatus, setBackendStatus] = useState<"starting" | "ready" | "error" | "stopped">("starting");
+  const [backendDetail, setBackendDetail] = useState(
+    "Waiting for backend readiness check.",
+  );
+  const [backendDiagnostics, setBackendDiagnostics] = useState<string[]>([]);
+
+  const modeDescription = useMemo(() => {
+    if (mode === "single") {
+      return "Single link download mode is active.";
+    }
+    return "Batch queue mode is available in upcoming phase work.";
+  }, [mode]);
+
+  useEffect(() => {
+    if (!isTauriRuntimeAvailable()) {
+      setBackendStatus("ready");
+      setBackendDetail("Frontend preview mode. Managed lifecycle runs in Tauri desktop runtime.");
+      return undefined;
+    }
+
+    const lifecycle = new BackendLifecycle(new TauriBackendRuntime(), {
+      healthProbe: probeBackendHealth,
+      sleep: wait,
+      now: () => Date.now(),
+    });
+
+    let mounted = true;
+    setBackendStatus("starting");
+    setBackendDetail("Starting backend and polling /api/v1/health...");
+
+    void lifecycle
+      .start({
+        mode: "dev-python",
+        host: "127.0.0.1",
+        port: 8787,
+        backendRoot: "F:\\Work\\DouyinDownload\\douyin-downloader",
+        configPath: "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml",
+        outputPath,
+        healthTimeoutMs: 12_000,
+        healthPollMs: 400,
+      })
+      .then((ready) => {
+        if (!mounted) {
+          return;
+        }
+        setBackendStatus(ready.state);
+        setBackendDetail(ready.detail);
+        setBackendDiagnostics(lifecycle.getDiagnostics().map((entry) => entry.message));
+      });
+
+    return () => {
+      mounted = false;
+      void lifecycle.stop();
+    };
+  }, [outputPath]);
+
+  return (
+    <main className="app-shell">
+      <header className="app-header">
+        <h1>Douyin Downloader</h1>
+        <p className="subtitle">Windows utility shell for managed desktop downloads</p>
+      </header>
+
+      <section className="layout-grid">
+        <BackendStatusCard status={backendStatus} detail={backendDetail} />
+        <OutputFolderControl outputPath={outputPath} onOutputPathChange={setOutputPath} />
+
+        <section className="card mode-card" aria-label="Download modes">
+          <div className="mode-toggle" role="tablist" aria-label="Download mode tabs">
+            <button
+              role="tab"
+              aria-selected={mode === "single"}
+              className={mode === "single" ? "tab active" : "tab"}
+              onClick={() => setMode("single")}
+              type="button"
+            >
+              Single
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "batch"}
+              className={mode === "batch" ? "tab active" : "tab"}
+              onClick={() => setMode("batch")}
+              type="button"
+            >
+              Batch
+            </button>
+          </div>
+          <p className="mode-description">{modeDescription}</p>
+          {mode === "single" ? (
+            <SingleDownloadPanel url={url} onUrlChange={setUrl} />
+          ) : (
+            <p className="batch-placeholder">Batch controls are scaffolded and will be enabled in Phase 2.</p>
+          )}
+        </section>
+
+        <JobStatusPlaceholder />
+      </section>
+      <div data-testid="backend-diagnostics-cache" hidden>
+        {backendDiagnostics.join(" | ")}
+      </div>
+    </main>
+  );
+}

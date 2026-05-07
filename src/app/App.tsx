@@ -3,6 +3,7 @@ import { BackendStatusCard } from "../components/BackendStatusCard";
 import { JobStatusPlaceholder } from "../components/JobStatusPlaceholder";
 import { OutputFolderControl } from "../components/OutputFolderControl";
 import { SingleDownloadPanel } from "../components/SingleDownloadPanel";
+import { createBackendClient } from "../services/backendClient";
 import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
 import { isTauriRuntimeAvailable, TauriBackendRuntime } from "../services/tauriBackendRuntime";
 
@@ -12,11 +13,18 @@ export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>("single");
   const [url, setUrl] = useState("");
   const [outputPath, setOutputPath] = useState("C:\\DouyinDownloads");
+  const [configVersion, setConfigVersion] = useState(1);
+  const [backendReadyConfigVersion, setBackendReadyConfigVersion] = useState(1);
   const [backendStatus, setBackendStatus] = useState<"starting" | "ready" | "error" | "stopped">("starting");
   const [backendDetail, setBackendDetail] = useState(
     "Waiting for backend readiness check.",
   );
   const [backendDiagnostics, setBackendDiagnostics] = useState<string[]>([]);
+  const [submitMessage, setSubmitMessage] = useState<string>("");
+  const [submitMessageTone, setSubmitMessageTone] = useState<"error" | "hint">("hint");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const backendClient = useMemo(() => createBackendClient({ baseUrl: "http://127.0.0.1:8787" }), []);
 
   const modeDescription = useMemo(() => {
     if (mode === "single") {
@@ -29,6 +37,7 @@ export function App(): JSX.Element {
     if (!isTauriRuntimeAvailable()) {
       setBackendStatus("ready");
       setBackendDetail("Frontend preview mode. Managed lifecycle runs in Tauri desktop runtime.");
+      setBackendReadyConfigVersion(configVersion);
       return undefined;
     }
 
@@ -60,13 +69,74 @@ export function App(): JSX.Element {
         setBackendStatus(ready.state);
         setBackendDetail(ready.detail);
         setBackendDiagnostics(lifecycle.getDiagnostics().map((entry) => entry.message));
+        if (ready.state === "ready") {
+          setBackendReadyConfigVersion(configVersion);
+        }
       });
 
     return () => {
       mounted = false;
       void lifecycle.stop();
     };
-  }, [outputPath]);
+  }, [outputPath, configVersion]);
+
+  const backendReadyForSubmit = backendStatus === "ready";
+  const configReadyForSubmit = configVersion === backendReadyConfigVersion;
+  const submitDisabled = !backendReadyForSubmit || !configReadyForSubmit || isSubmitting;
+
+  const submitStatusMessage = useMemo(() => {
+    if (isSubmitting) {
+      return "Submitting download request...";
+    }
+    if (!configReadyForSubmit) {
+      return "Start is disabled while backend restarts with the updated output folder.";
+    }
+    if (!backendReadyForSubmit) {
+      return "Start is disabled while backend readiness is pending.";
+    }
+    return "";
+  }, [backendReadyForSubmit, configReadyForSubmit, isSubmitting]);
+
+  const handleSingleSubmit = async (): Promise<void> => {
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) {
+      setSubmitMessage("Enter a Douyin URL before starting download.");
+      setSubmitMessageTone("error");
+      return;
+    }
+
+    if (!isAllowedDouyinUrl(trimmedUrl)) {
+      setSubmitMessage("Only Douyin and iesdouyin links are supported in this phase.");
+      setSubmitMessageTone("error");
+      return;
+    }
+
+    if (submitDisabled) {
+      setSubmitMessage(submitStatusMessage);
+      setSubmitMessageTone("error");
+      return;
+    }
+
+    setSubmitMessage("");
+    setSubmitMessageTone("hint");
+    setIsSubmitting(true);
+    try {
+      const response = await backendClient.createDownloadJob({ url: trimmedUrl });
+      setActiveJobId(response.jobId);
+      setSubmitMessage(`Download queued as ${response.jobId}.`);
+      setSubmitMessageTone("hint");
+    } catch {
+      setSubmitMessage("Could not submit download. Check backend status and try again.");
+      setSubmitMessageTone("error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleOutputPathChange = (nextPath: string): void => {
+    setOutputPath(nextPath);
+    setConfigVersion((version) => version + 1);
+  };
 
   return (
     <main className="app-shell">
@@ -77,7 +147,7 @@ export function App(): JSX.Element {
 
       <section className="layout-grid">
         <BackendStatusCard status={backendStatus} detail={backendDetail} />
-        <OutputFolderControl outputPath={outputPath} onOutputPathChange={setOutputPath} />
+        <OutputFolderControl outputPath={outputPath} onOutputPathChange={handleOutputPathChange} />
 
         <section className="card mode-card" aria-label="Download modes">
           <div className="mode-toggle" role="tablist" aria-label="Download mode tabs">
@@ -102,17 +172,45 @@ export function App(): JSX.Element {
           </div>
           <p className="mode-description">{modeDescription}</p>
           {mode === "single" ? (
-            <SingleDownloadPanel url={url} onUrlChange={setUrl} />
+            <SingleDownloadPanel
+              url={url}
+              onUrlChange={setUrl}
+              onSubmit={handleSingleSubmit}
+              submitDisabled={submitDisabled}
+              submitLabel={isSubmitting ? "Submitting..." : "Start download"}
+              message={submitMessage || submitStatusMessage}
+              messageTone={submitMessage ? submitMessageTone : "hint"}
+            />
           ) : (
             <p className="batch-placeholder">Batch controls are scaffolded and will be enabled in Phase 2.</p>
           )}
         </section>
 
-        <JobStatusPlaceholder />
+        <JobStatusPlaceholder activeJobId={activeJobId} />
       </section>
       <div data-testid="backend-diagnostics-cache" hidden>
         {backendDiagnostics.join(" | ")}
       </div>
     </main>
+  );
+}
+
+function isAllowedDouyinUrl(candidate: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return false;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  return (
+    host === "douyin.com" ||
+    host.endsWith(".douyin.com") ||
+    host === "iesdouyin.com" ||
+    host.endsWith(".iesdouyin.com")
   );
 }

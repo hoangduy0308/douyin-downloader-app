@@ -6,19 +6,21 @@ const mocks = vi.hoisted(() => ({
   getJobMock: vi.fn(),
   runtimeAvailable: false,
   lifecycleStartMock: vi.fn(),
+  openOutputFolderMock: vi.fn(),
 }));
 
 vi.mock("../services/backendClient", () => ({
-    createBackendClient: () => ({
-      health: vi.fn(),
-      createDownloadJob: mocks.createDownloadJobMock,
-      getJob: mocks.getJobMock,
-      listJobs: vi.fn(),
-    }),
-  }));
+  createBackendClient: () => ({
+    health: vi.fn(),
+    createDownloadJob: mocks.createDownloadJobMock,
+    getJob: mocks.getJobMock,
+    listJobs: vi.fn(),
+  }),
+}));
 
 vi.mock("../services/tauriBackendRuntime", () => ({
   isTauriRuntimeAvailable: () => mocks.runtimeAvailable,
+  openOutputFolder: (path: string) => mocks.openOutputFolderMock(path),
   TauriBackendRuntime: class {},
 }));
 
@@ -51,10 +53,12 @@ describe("App shell", () => {
     mocks.createDownloadJobMock.mockReset();
     mocks.getJobMock.mockReset();
     mocks.lifecycleStartMock.mockReset();
+    mocks.openOutputFolderMock.mockReset();
     mocks.lifecycleStartMock.mockResolvedValue({
       state: "ready",
       detail: "Backend is ready.",
     });
+    mocks.openOutputFolderMock.mockResolvedValue(undefined);
   });
 
   it("renders first-screen workflow controls with single and batch tabs", () => {
@@ -82,7 +86,9 @@ describe("App shell", () => {
 
     expect(singleTab).toHaveAttribute("aria-selected", "false");
     expect(batchTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("Batch controls are scaffolded and will be enabled in Phase 2.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Batch controls are scaffolded and will be enabled in Phase 2."),
+    ).toBeInTheDocument();
   });
 
   it("shows required validation for blank single URL submit", () => {
@@ -102,7 +108,9 @@ describe("App shell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Start download" }));
 
-    expect(screen.getByText("Only Douyin and iesdouyin links are supported in this phase.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Only Douyin and iesdouyin links are supported in this phase."),
+    ).toBeInTheDocument();
     expect(mocks.createDownloadJobMock).not.toHaveBeenCalled();
   });
 
@@ -114,7 +122,9 @@ describe("App shell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Start download" }));
 
-    expect(screen.getByText("Only Douyin and iesdouyin links are supported in this phase.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Only Douyin and iesdouyin links are supported in this phase."),
+    ).toBeInTheDocument();
     expect(mocks.createDownloadJobMock).not.toHaveBeenCalled();
   });
 
@@ -137,6 +147,7 @@ describe("App shell", () => {
       },
       error: null,
     });
+
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("Douyin URL"), {
@@ -148,13 +159,14 @@ describe("App shell", () => {
       expect(mocks.createDownloadJobMock).toHaveBeenCalledWith({
         url: "https://www.douyin.com/video/123",
       });
-      });
-      expect(screen.getByText("Download queued as job-123.")).toBeInTheDocument();
-      expect(screen.getByText("Pending")).toBeInTheDocument();
-      expect(screen.getByText("Active job id: job-123")).toBeInTheDocument();
-      expect(screen.getByText("3")).toBeInTheDocument();
-      expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(2);
     });
+
+    expect(screen.getByText("Download queued as job-123.")).toBeInTheDocument();
+    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(screen.getByText("Active job id: job-123")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(2);
+  });
 
   it("disables submit while backend is not ready", () => {
     mocks.runtimeAvailable = true;
@@ -164,10 +176,13 @@ describe("App shell", () => {
           // keep pending
         }),
     );
+
     render(<App />);
 
     expect(screen.getByRole("button", { name: "Start download" })).toBeDisabled();
-    expect(screen.getByText("Start is disabled while backend readiness is pending.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Start is disabled while backend readiness is pending."),
+    ).toBeInTheDocument();
   });
 
   it("disables submit while config version is waiting for backend restart", async () => {
@@ -183,7 +198,9 @@ describe("App shell", () => {
             // keep pending
           }),
       );
+
     render(<App />);
+
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Start download" })).toBeEnabled();
     });
@@ -200,6 +217,7 @@ describe("App shell", () => {
 
   it("shows friendly submit failure when backend submission fails", async () => {
     mocks.createDownloadJobMock.mockRejectedValueOnce(new Error("submit failed"));
+
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("Douyin URL"), {
@@ -207,12 +225,12 @@ describe("App shell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Start download" }));
 
-      await waitFor(() => {
-        expect(
-          screen.getByText("Could not submit download. Check backend status and try again."),
-        ).toBeInTheDocument();
-      });
+    await waitFor(() => {
+      expect(
+        screen.getByText("Could not submit download. Check backend status and try again."),
+      ).toBeInTheDocument();
     });
+  });
 
   it("renders running and success counts from backend polling and stops on terminal status", async () => {
     mocks.createDownloadJobMock.mockResolvedValueOnce({
@@ -248,6 +266,7 @@ describe("App shell", () => {
         },
         error: null,
       });
+
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("Douyin URL"), {
@@ -262,10 +281,13 @@ describe("App shell", () => {
       expect(screen.getByText("1")).toBeInTheDocument();
     });
 
-    await waitFor(() => {
-      expect(screen.getAllByText("Success").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getByText("Download finished successfully.")).toBeInTheDocument();
-    }, { timeout: 2500 });
+    await waitFor(
+      () => {
+        expect(screen.getAllByText("Success").length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByText("Download finished successfully.")).toBeInTheDocument();
+      },
+      { timeout: 2500 },
+    );
     expect(mocks.getJobMock).toHaveBeenCalledTimes(2);
   });
 
@@ -275,6 +297,7 @@ describe("App shell", () => {
       status: "pending",
     });
     mocks.getJobMock.mockRejectedValueOnce(new Error("404 job missing"));
+
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("Douyin URL"), {
@@ -289,5 +312,137 @@ describe("App shell", () => {
     });
     expect(screen.queryByText("job missing")).not.toBeInTheDocument();
     expect(screen.getByTestId("job-diagnostics-cache")).toHaveTextContent("job missing");
+  });
+
+  it("opens the selected output folder for terminal success jobs", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "job-open-success",
+      status: "pending",
+    });
+    mocks.getJobMock.mockResolvedValueOnce({
+      jobId: "job-open-success",
+      status: "success",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 1,
+        failed: 0,
+        skipped: 0,
+      },
+      error: null,
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Download location"), {
+      target: { value: "D:\\Media\\DouyinDownloads" },
+    });
+    fireEvent.change(screen.getByLabelText("Douyin URL"), {
+      target: { value: "https://www.douyin.com/video/term-success" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Open output folder" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open output folder" }));
+
+    await waitFor(() => {
+      expect(mocks.openOutputFolderMock).toHaveBeenCalledWith("D:\\Media\\DouyinDownloads");
+    });
+  });
+
+  it("keeps open-folder action disabled when no output folder is configured", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "job-no-output",
+      status: "pending",
+    });
+    mocks.getJobMock.mockResolvedValueOnce({
+      jobId: "job-no-output",
+      status: "success",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 1,
+        failed: 0,
+        skipped: 0,
+      },
+      error: null,
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Download location"), {
+      target: { value: "   " },
+    });
+    fireEvent.change(screen.getByLabelText("Douyin URL"), {
+      target: { value: "https://www.douyin.com/video/no-output" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Open output folder" })).toBeDisabled();
+    });
+    expect(
+      screen.getByText("Choose an output folder first before opening it."),
+    ).toBeInTheDocument();
+    expect(mocks.openOutputFolderMock).not.toHaveBeenCalled();
+  });
+
+  it("shows friendly folder-missing message while keeping raw details in diagnostics", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "job-open-failed",
+      status: "pending",
+    });
+    mocks.getJobMock.mockResolvedValueOnce({
+      jobId: "job-open-failed",
+      status: "failed",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 0,
+        failed: 1,
+        skipped: 0,
+      },
+      error: "RuntimeError: cookie expired",
+    });
+    mocks.openOutputFolderMock.mockRejectedValueOnce(
+      new Error("Output folder path does not exist: C:\\Missing\\DouyinDownloads"),
+    );
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Download location"), {
+      target: { value: "C:\\Missing\\DouyinDownloads" },
+    });
+    fireEvent.change(screen.getByLabelText("Douyin URL"), {
+      target: { value: "https://www.douyin.com/video/fail-open" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Open output folder" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open output folder" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "The selected output folder is missing. Recreate it or choose a different folder.",
+        ),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Output folder path does not exist")).not.toBeInTheDocument();
+    expect(screen.getByTestId("job-diagnostics-cache")).toHaveTextContent(
+      "Output folder path does not exist: C:\\Missing\\DouyinDownloads",
+    );
   });
 });

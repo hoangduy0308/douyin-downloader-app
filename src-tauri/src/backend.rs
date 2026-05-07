@@ -91,6 +91,12 @@ pub struct BackendStopResponse {
     pub message: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenOutputFolderRequest {
+    pub path: String,
+}
+
 #[tauri::command]
 pub fn backend_start(
     request: BackendStartRequest,
@@ -230,6 +236,36 @@ pub fn backend_diagnostics(manager: tauri::State<BackendManager>) -> Result<Vec<
         .lock()
         .map_err(|_| "backend diagnostics mutex poisoned".to_owned())?;
     Ok(diagnostics.clone())
+}
+
+#[tauri::command]
+pub fn open_output_folder(
+    request: OpenOutputFolderRequest,
+    manager: tauri::State<BackendManager>,
+) -> Result<(), String> {
+    let path = request.path.trim().to_owned();
+    if path.is_empty() {
+        return Err("Output folder path is empty".to_owned());
+    }
+
+    let folder = Path::new(&path);
+    if !folder.is_absolute() {
+        return Err(format!("Output folder path must be absolute: {}", path));
+    }
+    if !folder.exists() {
+        return Err(format!("Output folder path does not exist: {}", path));
+    }
+    if !folder.is_dir() {
+        return Err(format!("Output folder path is not a directory: {}", path));
+    }
+
+    let mut command = Command::new("explorer");
+    command.arg(&path).stdout(Stdio::null()).stderr(Stdio::null());
+    command
+        .spawn()
+        .map_err(|error| format!("Failed to open output folder '{}': {}", path, error))?;
+    manager.push_diagnostic("info", "filesystem", format!("Opened output folder: {}", path));
+    Ok(())
 }
 
 fn read_stream_lines<R: std::io::Read>(

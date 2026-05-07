@@ -13,6 +13,12 @@ interface BackendStartPayload {
   };
 }
 
+interface OpenOutputFolderPayload {
+  request: {
+    path: string;
+  };
+}
+
 declare global {
   interface Window {
     __TAURI__?: unknown;
@@ -46,4 +52,12 @@ export class TauriBackendRuntime implements BackendRuntime {
     const diagnostics = await invoke<BackendDiagnostic[]>("backend_diagnostics");
     return diagnostics ?? [];
   }
+}
+
+export async function openOutputFolder(path: string): Promise<void> {
+  await invoke("open_output_folder", {
+    request: {
+      path,
+    },
+  } satisfies OpenOutputFolderPayload);
 }

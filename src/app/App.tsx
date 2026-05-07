@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { BackendStatusCard } from "../components/BackendStatusCard";
+import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { JobStatusPanel } from "../components/JobStatusPanel";
 import { OutputFolderControl } from "../components/OutputFolderControl";
 import { SingleDownloadPanel } from "../components/SingleDownloadPanel";
@@ -8,7 +9,7 @@ import { createBackendClient } from "../services/backendClient";
 import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
 import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
 import { createJobPoller } from "../services/jobPolling";
-import { isTauriRuntimeAvailable, TauriBackendRuntime } from "../services/tauriBackendRuntime";
+import { isTauriRuntimeAvailable, openOutputFolder, TauriBackendRuntime } from "../services/tauriBackendRuntime";
 
 type Mode = "single" | "batch";
 
@@ -31,6 +32,7 @@ export function App(): JSX.Element {
   const [jobPanelMessage, setJobPanelMessage] = useState<string>("");
   const [jobPanelTone, setJobPanelTone] = useState<"error" | "hint">("hint");
   const [jobDiagnostics, setJobDiagnostics] = useState<string[]>([]);
+  const [openingOutputFolder, setOpeningOutputFolder] = useState(false);
   const backendClient = useMemo(() => createBackendClient({ baseUrl: "http://127.0.0.1:8787" }), []);
 
   const modeDescription = useMemo(() => {
@@ -147,6 +149,36 @@ export function App(): JSX.Element {
     return "";
   }, [backendReadyForSubmit, configReadyForSubmit, isSubmitting]);
 
+  const hasTerminalJobState = activeJobState?.status === "success" || activeJobState?.status === "failed";
+  const trimmedOutputPath = outputPath.trim();
+  const hasConfiguredOutputPath = trimmedOutputPath.length > 0;
+
+  const handleOpenOutputFolder = async (): Promise<void> => {
+    if (!hasConfiguredOutputPath) {
+      setJobPanelMessage("Choose an output folder first before opening it.");
+      setJobPanelTone("hint");
+      return;
+    }
+
+    setOpeningOutputFolder(true);
+    try {
+      await openOutputFolder(trimmedOutputPath);
+      setJobPanelMessage("Opened the selected output folder.");
+      setJobPanelTone("hint");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setJobDiagnostics((existing) => existing.concat(detail));
+      if (detail.toLowerCase().includes("does not exist")) {
+        setJobPanelMessage("The selected output folder is missing. Recreate it or choose a different folder.");
+      } else {
+        setJobPanelMessage("Could not open the selected output folder. Check diagnostics for details.");
+      }
+      setJobPanelTone("error");
+    } finally {
+      setOpeningOutputFolder(false);
+    }
+  };
+
   const handleSingleSubmit = async (): Promise<void> => {
     const trimmedUrl = url.trim();
     if (!trimmedUrl) {
@@ -244,7 +276,15 @@ export function App(): JSX.Element {
           jobState={activeJobState}
           message={jobPanelMessage}
           messageTone={jobPanelTone}
+          showResultActions={hasTerminalJobState}
+          openOutputDisabled={!hasConfiguredOutputPath || openingOutputFolder}
+          openOutputDisabledReason={hasConfiguredOutputPath ? "" : "Choose an output folder first before opening it."}
+          openOutputInProgress={openingOutputFolder}
+          onOpenOutputFolder={() => {
+            void handleOpenOutputFolder();
+          }}
         />
+        <DiagnosticsPanel backendDiagnostics={backendDiagnostics} jobDiagnostics={jobDiagnostics} />
       </section>
       <div data-testid="backend-diagnostics-cache" hidden>
         {backendDiagnostics.join(" | ")}

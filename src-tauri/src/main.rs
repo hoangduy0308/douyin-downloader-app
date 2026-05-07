@@ -8,7 +8,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             backend::backend_start,
             backend::backend_stop,
-            backend::backend_diagnostics
+            backend::backend_diagnostics,
+            backend::open_output_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

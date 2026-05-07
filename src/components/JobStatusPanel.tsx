@@ -5,6 +5,11 @@ interface JobStatusPanelProps {
   jobState: JobState | null;
   message: string;
   messageTone: "error" | "hint";
+  showResultActions: boolean;
+  openOutputDisabled: boolean;
+  openOutputDisabledReason: string;
+  openOutputInProgress: boolean;
+  onOpenOutputFolder: () => void;
 }
 
 export function JobStatusPanel({
@@ -12,6 +17,11 @@ export function JobStatusPanel({
   jobState,
   message,
   messageTone,
+  showResultActions,
+  openOutputDisabled,
+  openOutputDisabledReason,
+  openOutputInProgress,
+  onOpenOutputFolder,
 }: JobStatusPanelProps): JSX.Element {
   const statusLabel = getStatusLabel(activeJobId, jobState);
   const counts = jobState?.counts ?? {
@@ -46,12 +56,20 @@ export function JobStatusPanel({
           <strong>{counts.skipped}</strong>
         </div>
       </div>
-      {activeJobId ? <p className="hint">Active job id: {activeJobId}</p> : null}
-      {message ? (
-        <p className={messageTone === "error" ? "status-message status-message-error" : "hint"}>{message}</p>
-      ) : null}
-    </section>
-  );
+        {activeJobId ? <p className="hint">Active job id: {activeJobId}</p> : null}
+        {message ? (
+          <p className={messageTone === "error" ? "status-message status-message-error" : "hint"}>{message}</p>
+        ) : null}
+        {showResultActions ? (
+          <section className="result-actions" aria-label="Result actions">
+            <button type="button" onClick={onOpenOutputFolder} disabled={openOutputDisabled}>
+              {openOutputInProgress ? "Opening..." : "Open output folder"}
+            </button>
+            {openOutputDisabledReason ? <p className="hint">{openOutputDisabledReason}</p> : null}
+          </section>
+        ) : null}
+      </section>
+    );
 }
 
 function getStatusLabel(activeJobId: string | null, jobState: JobState | null): string {

@@ -179,6 +179,39 @@ button:disabled {
   color: #50667b;
 }
 
+.result-actions {
+  margin-top: 12px;
+}
+
+.result-actions button {
+  margin-top: 4px;
+}
+
+.diagnostics-card {
+  grid-column: span 2;
+}
+
+.diagnostics-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.diagnostics-count {
+  color: #4f657a;
+  font-size: 0.9rem;
+}
+
+.diagnostics-list {
+  margin: 12px 0 0;
+  padding-left: 18px;
+}
+
+.diagnostics-list li {
+  margin-bottom: 6px;
+  color: #2f4459;
+}
+
 @media (max-width: 900px) {
   .layout-grid {
     grid-template-columns: 1fr;
@@ -190,5 +223,9 @@ button:disabled {
 
   .counts-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .diagnostics-card {
+    grid-column: span 1;
   }
 }

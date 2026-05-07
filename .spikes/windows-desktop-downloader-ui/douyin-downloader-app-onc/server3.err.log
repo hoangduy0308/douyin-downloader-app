@@ -1,0 +1,35 @@
+Traceback (most recent call last):
+  File "cli\main.py", line 381, in main
+  File "asyncio\runners.py", line 190, in run
+  File "asyncio\runners.py", line 118, in run
+  File "asyncio\base_events.py", line 654, in run_until_complete
+  File "cli\main.py", line 132, in main_async
+  File "cli\progress_display.py", line 44, in show_banner
+  File "rich\console.py", line 1704, in print
+  File "rich\console.py", line 864, in __exit__
+  File "rich\console.py", line 820, in _exit_buffer
+  File "rich\console.py", line 2055, in _check_buffer
+  File "rich\console.py", line 2091, in _write_buffer
+  File "rich\_windows_renderer.py", line 17, in legacy_windows_render
+  File "rich\_win32_console.py", line 441, in write_styled
+  File "rich\_win32_console.py", line 402, in write_text
+  File "encodings\cp1252.py", line 19, in encode
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 0-43: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "run.py", line 13, in <module>
+  File "cli\main.py", line 386, in main
+  File "cli\progress_display.py", line 256, in print_error
+  File "rich\console.py", line 1704, in print
+  File "rich\console.py", line 864, in __exit__
+  File "rich\console.py", line 820, in _exit_buffer
+  File "rich\console.py", line 2055, in _check_buffer
+  File "rich\console.py", line 2091, in _write_buffer
+  File "rich\_windows_renderer.py", line 17, in legacy_windows_render
+  File "rich\_win32_console.py", line 441, in write_styled
+  File "rich\_win32_console.py", line 402, in write_text
+  File "encodings\cp1252.py", line 19, in encode
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 0-43: character maps to <undefined>
+[PYI-1560:ERROR] Failed to execute script 'run' due to unhandled exception!

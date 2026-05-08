@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -110,6 +112,26 @@ pub struct SettingsEnsureDirectoryRequest {
 pub struct SettingsWriteConfigAtomicRequest {
     pub path: String,
     pub contents: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CookieCaptureAndCommitRequest {
+    pub backend_root: String,
+    pub managed_config_path: String,
+    pub output_path: String,
+    pub python_executable: Option<String>,
+    pub browser: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CookieCaptureAndCommitResponse {
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub diagnostics: Vec<String>,
+    pub cookies: Option<BTreeMap<String, String>>,
+    pub error: Option<String>,
 }
 
 #[tauri::command]
@@ -256,6 +278,268 @@ pub fn backend_diagnostics(manager: tauri::State<BackendManager>) -> Result<Vec<
 }
 
 #[tauri::command]
+pub fn cookie_capture_and_commit(
+    request: CookieCaptureAndCommitRequest,
+) -> Result<CookieCaptureAndCommitResponse, String> {
+    const REQUIRED_COOKIE_KEYS: [&str; 4] = ["msToken", "ttwid", "odin_tt", "passport_csrf_token"];
+
+    let backend_root = PathBuf::from(request.backend_root.trim());
+    if !backend_root.is_absolute() {
+        return Ok(CookieCaptureAndCommitResponse {
+            status: "failed".to_owned(),
+            exit_code: None,
+            diagnostics: Vec::new(),
+            cookies: None,
+            error: Some("Backend root must be an absolute path.".to_owned()),
+        });
+    }
+    if !backend_root.exists() {
+        return Ok(CookieCaptureAndCommitResponse {
+            status: "failed".to_owned(),
+            exit_code: None,
+            diagnostics: Vec::new(),
+            cookies: None,
+            error: Some(format!(
+                "Backend root does not exist: {}",
+                backend_root.display()
+            )),
+        });
+    }
+
+    let output_path = PathBuf::from(request.output_path.trim());
+    if !output_path.is_absolute() {
+        return Ok(CookieCaptureAndCommitResponse {
+            status: "failed".to_owned(),
+            exit_code: None,
+            diagnostics: Vec::new(),
+            cookies: None,
+            error: Some("Cookie output path must be absolute.".to_owned()),
+        });
+    }
+
+    let managed_config_path = PathBuf::from(request.managed_config_path.trim());
+    if !managed_config_path.is_absolute() {
+        return Ok(CookieCaptureAndCommitResponse {
+            status: "failed".to_owned(),
+            exit_code: None,
+            diagnostics: Vec::new(),
+            cookies: None,
+            error: Some("Managed config path must be absolute.".to_owned()),
+        });
+    }
+
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to ensure cookie output directory '{}': {}",
+                parent.display(),
+                error
+            )
+        })?;
+    }
+
+    let python_executable = request.python_executable.unwrap_or_else(|| "python".to_owned());
+    let browser = request.browser.unwrap_or_else(|| "chromium".to_owned());
+    let mut command = Command::new(&python_executable);
+    command
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .arg("-m")
+        .arg("tools.cookie_fetcher")
+        .arg("--output")
+        .arg(output_path.as_os_str())
+        .arg("--browser")
+        .arg(&browser)
+        .current_dir(&backend_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = match command.spawn() {
+        Ok(spawned) => spawned,
+        Err(error) => {
+            return Ok(CookieCaptureAndCommitResponse {
+                status: "failed".to_owned(),
+                exit_code: None,
+                diagnostics: Vec::new(),
+                cookies: None,
+                error: Some(format!("Failed to start cookie fetcher process: {}", error)),
+            });
+        }
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(error) = writeln!(stdin) {
+            return Ok(CookieCaptureAndCommitResponse {
+                status: "failed".to_owned(),
+                exit_code: None,
+                diagnostics: Vec::new(),
+                cookies: None,
+                error: Some(format!("Failed to confirm cookie capture from app boundary: {}", error)),
+            });
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("Failed while waiting for cookie fetcher process: {}", error))?;
+
+    let mut diagnostics = Vec::new();
+    diagnostics.extend(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| format!("stdout: {}", line)),
+    );
+    diagnostics.extend(
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .map(|line| format!("stderr: {}", line)),
+    );
+
+    let exit_code = output.status.code();
+    if !output.status.success() {
+        return Ok(CookieCaptureAndCommitResponse {
+            status: "failed".to_owned(),
+            exit_code,
+            diagnostics,
+            cookies: None,
+            error: Some("Cookie fetcher exited with a non-zero status.".to_owned()),
+        });
+    }
+
+    let raw = match fs::read_to_string(&output_path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            return Ok(CookieCaptureAndCommitResponse {
+                status: "failed".to_owned(),
+                exit_code,
+                diagnostics,
+                cookies: None,
+                error: Some(format!(
+                    "Cookie output file was not created or readable '{}': {}",
+                    output_path.display(),
+                    error
+                )),
+            });
+        }
+    };
+
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(CookieCaptureAndCommitResponse {
+                status: "failed".to_owned(),
+                exit_code,
+                diagnostics,
+                cookies: None,
+                error: Some(format!("Cookie output JSON is invalid: {}", error)),
+            });
+        }
+    };
+
+    let cookies_object = match parsed.as_object() {
+        Some(value) => value,
+        None => {
+            return Ok(CookieCaptureAndCommitResponse {
+                status: "failed".to_owned(),
+                exit_code,
+                diagnostics,
+                cookies: None,
+                error: Some("Cookie output JSON must be an object.".to_owned()),
+            });
+        }
+    };
+
+    let mut cookies = BTreeMap::new();
+    for (key, value) in cookies_object {
+        if let Some(string_value) = value.as_str() {
+            let clean_key = key.trim().to_owned();
+            let clean_value = string_value.trim().to_owned();
+            if !clean_key.is_empty() && !clean_value.is_empty() {
+                cookies.insert(clean_key, clean_value);
+            }
+        }
+    }
+
+    let missing: Vec<&str> = REQUIRED_COOKIE_KEYS
+        .iter()
+        .copied()
+        .filter(|key| !cookies.contains_key(*key))
+        .collect();
+    if !missing.is_empty() {
+        diagnostics.push(format!("Missing required cookie keys: {}", missing.join(", ")));
+        return Ok(CookieCaptureAndCommitResponse {
+            status: "failed".to_owned(),
+            exit_code,
+            diagnostics,
+            cookies: Some(cookies),
+            error: Some("Cookie capture completed with missing required keys.".to_owned()),
+        });
+    }
+
+    let existing_yaml = if managed_config_path.exists() {
+        fs::read_to_string(&managed_config_path).map_err(|error| {
+            format!(
+                "Failed to read managed config '{}': {}",
+                managed_config_path.display(),
+                error
+            )
+        })?
+    } else {
+        String::new()
+    };
+
+    let mut config_value: serde_yaml::Value = if existing_yaml.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&existing_yaml).map_err(|error| {
+            format!(
+                "Managed config is invalid YAML '{}': {}",
+                managed_config_path.display(),
+                error
+            )
+        })?
+    };
+
+    if !config_value.is_mapping() {
+        config_value = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+
+    let mapping = config_value
+        .as_mapping_mut()
+        .expect("value should be mapping after normalization");
+    let mut cookie_mapping = serde_yaml::Mapping::new();
+    for (key, value) in &cookies {
+        cookie_mapping.insert(
+            serde_yaml::Value::String(key.to_owned()),
+            serde_yaml::Value::String(value.to_owned()),
+        );
+    }
+    mapping.insert(
+        serde_yaml::Value::String("cookies".to_owned()),
+        serde_yaml::Value::Mapping(cookie_mapping),
+    );
+
+    let yaml_text = serde_yaml::to_string(&config_value)
+        .map_err(|error| format!("Failed to serialize managed config cookies: {}", error))?;
+    write_file_atomic(&managed_config_path, &yaml_text, "managed-config").map_err(|error| {
+        format!(
+            "Failed to commit managed cookie config '{}': {}",
+            managed_config_path.display(),
+            error
+        )
+    })?;
+
+    Ok(CookieCaptureAndCommitResponse {
+        status: "success".to_owned(),
+        exit_code,
+        diagnostics,
+        cookies: Some(cookies),
+        error: None,
+    })
+}
+
+#[tauri::command]
 pub fn open_output_folder(
     request: OpenOutputFolderRequest,
     manager: tauri::State<BackendManager>,
@@ -312,12 +596,19 @@ pub fn settings_write_config_atomic(request: SettingsWriteConfigAtomicRequest) -
         return Err(format!("Managed config path must be absolute: {}", path));
     }
 
-    let parent = target_path
-        .parent()
-        .ok_or_else(|| format!("Managed config path must have a parent directory: {}", path))?;
+    write_file_atomic(&target_path, &request.contents, "managed-config")
+}
+
+fn write_file_atomic(target_path: &Path, contents: &str, temp_label: &str) -> Result<(), String> {
+    let parent = target_path.parent().ok_or_else(|| {
+        format!(
+            "Target file must have a parent directory: {}",
+            target_path.display()
+        )
+    })?;
     fs::create_dir_all(parent).map_err(|error| {
         format!(
-            "Failed to ensure managed config parent directory '{}': {}",
+            "Failed to ensure parent directory '{}': {}",
             parent.display(),
             error
         )
@@ -327,34 +618,33 @@ pub fn settings_write_config_atomic(request: SettingsWriteConfigAtomicRequest) -
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    let temp_path = parent.join(format!(".managed-config-{}-{}.tmp", std::process::id(), nonce));
+    let temp_path = parent.join(format!(".{}-{}-{}.tmp", temp_label, std::process::id(), nonce));
 
-    fs::write(&temp_path, request.contents.as_bytes()).map_err(|error| {
+    fs::write(&temp_path, contents.as_bytes()).map_err(|error| {
         format!(
-            "Failed to write managed config temp file '{}': {}",
+            "Failed to write temp file '{}': {}",
             temp_path.display(),
             error
         )
     })?;
 
     if target_path.exists() {
-        fs::remove_file(&target_path).map_err(|error| {
+        fs::remove_file(target_path).map_err(|error| {
             format!(
-                "Failed to replace existing managed config '{}': {}",
+                "Failed to replace existing file '{}': {}",
                 target_path.display(),
                 error
             )
         })?;
     }
 
-    fs::rename(&temp_path, &target_path).map_err(|error| {
+    fs::rename(&temp_path, target_path).map_err(|error| {
         format!(
-            "Failed to commit managed config '{}': {}",
+            "Failed to commit file '{}': {}",
             target_path.display(),
             error
         )
     })?;
-
     Ok(())
 }
 

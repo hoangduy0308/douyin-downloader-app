@@ -32,6 +32,24 @@ interface SettingsWriteConfigAtomicPayload {
   };
 }
 
+interface CookieCaptureAndCommitPayload {
+  request: {
+    backendRoot: string;
+    managedConfigPath: string;
+    outputPath: string;
+    pythonExecutable?: string;
+    browser?: "chromium" | "firefox" | "webkit";
+  };
+}
+
+export interface CookieCaptureAndCommitResult {
+  status: "success" | "cancelled" | "missing-runtime" | "failed";
+  exitCode: number | null;
+  diagnostics: string[];
+  cookies?: Record<string, string> | null;
+  error?: string | null;
+}
+
 export function isTauriRuntimeAvailable(): boolean {
   return isTauri();
 }
@@ -90,4 +108,25 @@ export async function writeManagedConfigAtomic(path: string, contents: string): 
       contents,
     },
   } satisfies SettingsWriteConfigAtomicPayload);
+}
+
+export async function captureAndCommitCookies(request: {
+  backendRoot: string;
+  managedConfigPath: string;
+  outputPath: string;
+  pythonExecutable?: string;
+  browser?: "chromium" | "firefox" | "webkit";
+}): Promise<CookieCaptureAndCommitResult> {
+  if (!isTauri()) {
+    return {
+      status: "missing-runtime",
+      exitCode: null,
+      diagnostics: ["Tauri runtime is unavailable."],
+      cookies: null,
+      error: "tauri-runtime-unavailable",
+    };
+  }
+  return invoke<CookieCaptureAndCommitResult>("cookie_capture_and_commit", {
+    request,
+  } satisfies CookieCaptureAndCommitPayload);
 }

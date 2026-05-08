@@ -308,7 +308,9 @@ describe("App shell", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Download failed. Use Retry failed to try this row again."),
+        screen.getByText(
+          "Download failed. Check diagnostics for technical details. Use Retry failed to try this row again.",
+        ),
       ).toBeInTheDocument();
     });
     expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(1);
@@ -399,7 +401,11 @@ describe("App shell", () => {
 
     const batchPanel = screen.getByRole("region", { name: "Batch download panel" });
     expect(within(batchPanel).getByText("invalid URL")).toBeInTheDocument();
-    expect(within(batchPanel).getByText("Download failed. Use Retry failed to try this row again.")).toBeInTheDocument();
+    expect(
+      within(batchPanel).getByText(
+        "Douyin login cookies may be missing or expired. Use Fetch Cookies again, then Retry failed.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("batch-diagnostics-cache")).toHaveTextContent("RuntimeError: cookie expired");
 
     fireEvent.click(screen.getByRole("button", { name: "Retry failed" }));

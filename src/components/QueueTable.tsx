@@ -1,4 +1,9 @@
 import type { BatchQueueRow } from "../services/batchQueue";
+import { mapFailedJobError } from "../services/errorMapper";
+
+const RETRY_FAILED_MESSAGE = "Use Retry failed to try this row again.";
+const COOKIE_RECOVERY_MESSAGE =
+  "Douyin login cookies may be missing or expired. Use Fetch Cookies again, then Retry failed.";
 
 interface QueueTableProps {
   rows: BatchQueueRow[];
@@ -47,7 +52,7 @@ function getStatusLabel(status: BatchQueueRow["status"]): string {
 
 function getReasonLabel(row: BatchQueueRow): string {
   if (row.status === "failed") {
-    return "Download failed. Use Retry failed to try this row again.";
+    return getFailedReasonLabel(row.lastError);
   }
   if (row.lastError) {
     return row.lastError;
@@ -56,6 +61,35 @@ function getReasonLabel(row: BatchQueueRow): string {
     return row.status === "waiting" ? "ready" : "-";
   }
   return getSkipReasonLabel(row.skipReason);
+}
+
+function getFailedReasonLabel(lastError: BatchQueueRow["lastError"]): string {
+  if (!lastError) {
+    return `Download failed. ${RETRY_FAILED_MESSAGE}`;
+  }
+
+  if (isCookieFailure(lastError)) {
+    return COOKIE_RECOVERY_MESSAGE;
+  }
+
+  const mapped = mapFailedJobError(lastError);
+  if (!mapped) {
+    return `Download failed. ${RETRY_FAILED_MESSAGE}`;
+  }
+
+  return `${mapped.message} ${RETRY_FAILED_MESSAGE}`;
+}
+
+function isCookieFailure(lastError: string): boolean {
+  const lowered = lastError.toLowerCase();
+  return (
+    lowered.includes("cookie") ||
+    lowered.includes("mstoken") ||
+    lowered.includes("ttwid") ||
+    lowered.includes("login") ||
+    lowered.includes("401") ||
+    lowered.includes("403")
+  );
 }
 
 function getSkipReasonLabel(skipReason: BatchQueueRow["skipReason"]): string {

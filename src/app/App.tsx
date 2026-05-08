@@ -10,6 +10,7 @@ import { createBackendClient } from "../services/backendClient";
 import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
 import { readImportedBatchText } from "../services/batchImportAdapter";
 import { parseBatchQueueInput, type BatchQueueRow, type BatchQueueTotals } from "../services/batchQueue";
+import { createBatchQueueRunner, type BatchQueueRunnerSnapshot } from "../services/batchQueueRunner";
 import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
 import { createJobPoller } from "../services/jobPolling";
 import { isTauriRuntimeAvailable, openOutputFolder, TauriBackendRuntime } from "../services/tauriBackendRuntime";
@@ -49,9 +50,21 @@ export function App(): JSX.Element {
   const [batchInputText, setBatchInputText] = useState("");
   const [batchRows, setBatchRows] = useState<BatchQueueRow[]>([]);
   const [batchTotals, setBatchTotals] = useState<BatchQueueTotals>(EMPTY_BATCH_TOTALS);
+  const [batchSchedulingEnabled, setBatchSchedulingEnabled] = useState(true);
+  const [batchStarted, setBatchStarted] = useState(false);
   const [batchMessage, setBatchMessage] = useState("Paste multiline URLs or import a text file, then build the queue.");
   const [batchMessageTone, setBatchMessageTone] = useState<"error" | "hint">("hint");
   const backendClient = useMemo(() => createBackendClient({ baseUrl: "http://127.0.0.1:8787" }), []);
+  const batchQueueRunner = useMemo(() => {
+    return createBatchQueueRunner({
+      backendClient,
+      onSnapshot: (snapshot: BatchQueueRunnerSnapshot) => {
+        setBatchRows(snapshot.rows);
+        setBatchTotals(snapshot.totals);
+        setBatchSchedulingEnabled(snapshot.schedulingEnabled);
+      },
+    });
+  }, [backendClient]);
 
   const modeDescription = useMemo(() => {
     if (mode === "single") {
@@ -150,6 +163,12 @@ export function App(): JSX.Element {
     };
   }, [activeJobId, backendClient]);
 
+  useEffect(() => {
+    return () => {
+      batchQueueRunner.stop();
+    };
+  }, [batchQueueRunner]);
+
   const backendReadyForSubmit = backendStatus === "ready";
   const configReadyForSubmit = configVersion === backendReadyConfigVersion;
   const submitDisabled = !backendReadyForSubmit || !configReadyForSubmit || isSubmitting;
@@ -166,6 +185,25 @@ export function App(): JSX.Element {
     }
     return "";
   }, [backendReadyForSubmit, configReadyForSubmit, isSubmitting]);
+  const batchHasRunningRows = batchRows.some((row) => row.status === "running");
+  const batchHasWaitingRows = batchRows.some((row) => row.status === "waiting");
+  const batchHasTerminalRows = batchRows.some((row) => row.status === "success" || row.status === "failed");
+  const activeBatchRow = batchRows.find((row) => row.status === "running");
+  const batchQueueStatusLabel = useMemo(() => {
+    if (!batchStarted) {
+      return "Idle";
+    }
+    if (!batchSchedulingEnabled && batchHasWaitingRows) {
+      return "Paused";
+    }
+    if (batchHasRunningRows || batchHasWaitingRows) {
+      return "Running";
+    }
+    if (batchHasTerminalRows || batchTotals.skipped > 0) {
+      return "Completed";
+    }
+    return "Idle";
+  }, [batchHasRunningRows, batchHasTerminalRows, batchHasWaitingRows, batchSchedulingEnabled, batchStarted, batchTotals.skipped]);
 
   const hasTerminalJobState = activeJobState?.status === "success" || activeJobState?.status === "failed";
   const trimmedOutputPath = outputPath.trim();
@@ -242,6 +280,9 @@ export function App(): JSX.Element {
   };
 
   const handleBuildBatchQueue = (text: string): void => {
+    batchQueueRunner.stop();
+    setBatchStarted(false);
+    setBatchSchedulingEnabled(true);
     const parseResult = parseBatchQueueInput(text);
     setBatchRows(parseResult.rows);
     setBatchTotals(parseResult.totals);
@@ -253,6 +294,23 @@ export function App(): JSX.Element {
     setBatchMessage(
       `Queue built: ${parseResult.totals.readyToSubmit} ready, ${parseResult.totals.skipped} skipped.`,
     );
+    setBatchMessageTone("hint");
+  };
+
+  const handleStartBatchQueue = (): void => {
+    if (submitDisabled) {
+      setBatchMessage(submitStatusMessage);
+      setBatchMessageTone("error");
+      return;
+    }
+    if (batchTotals.readyToSubmit === 0) {
+      setBatchMessage("No ready URLs to start. Build a queue with valid Douyin links first.");
+      setBatchMessageTone("error");
+      return;
+    }
+    batchQueueRunner.start(batchRows);
+    setBatchStarted(true);
+    setBatchMessage("Batch queue started.");
     setBatchMessageTone("hint");
   };
 
@@ -312,20 +370,25 @@ export function App(): JSX.Element {
               messageTone={submitMessage ? submitMessageTone : "hint"}
             />
           ) : (
-            <BatchDownloadPanel
-              inputText={batchInputText}
-              onInputTextChange={setBatchInputText}
-              onBuildQueue={() => handleBuildBatchQueue(batchInputText)}
-              onImportText={() => {
-                void handleImportBatchText();
-              }}
-              totals={batchTotals}
-              rows={batchRows}
-              message={batchMessage}
-              messageTone={batchMessageTone}
-            />
-          )}
-        </section>
+              <BatchDownloadPanel
+                inputText={batchInputText}
+                onInputTextChange={setBatchInputText}
+                onBuildQueue={() => handleBuildBatchQueue(batchInputText)}
+                onStartQueue={handleStartBatchQueue}
+                onImportText={() => {
+                  void handleImportBatchText();
+                }}
+                totals={batchTotals}
+                rows={batchRows}
+                queueStatusLabel={batchQueueStatusLabel}
+                activeRowUrl={activeBatchRow?.normalizedUrl ?? activeBatchRow?.sourceText ?? null}
+                activeJobId={activeBatchRow?.currentJobId ?? null}
+                message={batchMessage}
+                messageTone={batchMessageTone}
+                startDisabled={submitDisabled || batchTotals.readyToSubmit === 0 || batchHasRunningRows}
+              />
+            )}
+          </section>
 
         <JobStatusPanel
           activeJobId={activeJobId}

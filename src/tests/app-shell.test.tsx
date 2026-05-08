@@ -134,6 +134,74 @@ describe("App shell", () => {
     expect(within(batchPanel).getByText("invalid URL")).toBeInTheDocument();
   });
 
+  it("starts batch queue through runner and shows active row/job with aggregate totals", async () => {
+    mocks.createDownloadJobMock
+      .mockResolvedValueOnce({
+        jobId: "batch-job-1",
+        status: "pending",
+      })
+      .mockResolvedValueOnce({
+        jobId: "batch-job-2",
+        status: "pending",
+      });
+    mocks.getJobMock.mockResolvedValue({
+      jobId: "batch-job-1",
+      status: "pending",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: null,
+      finishedAt: null,
+      counts: {
+        total: 1,
+        success: 0,
+        failed: 0,
+        skipped: 0,
+      },
+      error: null,
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Batch" }));
+    fireEvent.change(screen.getByLabelText("Batch URLs"), {
+      target: {
+        value: [
+          "https://www.douyin.com/video/100",
+          "https://www.example.com/video/200",
+          "https://www.iesdouyin.com/share/video/300",
+        ].join("\n"),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Build queue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start batch" }));
+
+    await waitFor(() => {
+      expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(2);
+    });
+    expect(mocks.createDownloadJobMock).toHaveBeenNthCalledWith(1, {
+      url: "https://www.douyin.com/video/100",
+    });
+    expect(mocks.createDownloadJobMock).toHaveBeenNthCalledWith(2, {
+      url: "https://www.iesdouyin.com/share/video/300",
+    });
+
+    const batchPanel = screen.getByRole("region", { name: "Batch download panel" });
+    const statusPanel = within(batchPanel).getByRole("region", { name: "Batch queue status" });
+    expect(within(statusPanel).getByText("Queue status")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("Running", { selector: "strong" })).toBeInTheDocument();
+    expect(within(statusPanel).getByText("Active URL")).toBeInTheDocument();
+    expect(
+      within(statusPanel).getByText("https://www.douyin.com/video/100", { selector: "strong" }),
+    ).toBeInTheDocument();
+    expect(within(statusPanel).getByText("Active job")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("batch-job-1", { selector: "strong" })).toBeInTheDocument();
+    expect(within(batchPanel).getAllByText("batch-job-2").length).toBeGreaterThanOrEqual(1);
+    expect(within(statusPanel).getByText("Skipped")).toBeInTheDocument();
+    const totalsPanel = within(statusPanel).getByLabelText("Batch queue totals");
+    const skippedTotalsCell = within(totalsPanel).getByText("Skipped").closest("div");
+    expect(skippedTotalsCell).not.toBeNull();
+    expect(within(skippedTotalsCell as HTMLDivElement).getByText("1")).toBeInTheDocument();
+  });
+
   it("shows required validation for blank single URL submit", () => {
     render(<App />);
 

@@ -5,6 +5,7 @@ import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { JobStatusPanel } from "../components/JobStatusPanel";
 import { OutputFolderControl } from "../components/OutputFolderControl";
 import { SingleDownloadPanel } from "../components/SingleDownloadPanel";
+import { AdvancedOptionsPanel } from "../components/AdvancedOptionsPanel";
 import type { JobState } from "../services/backendClient";
 import { createBackendClient } from "../services/backendClient";
 import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
@@ -19,7 +20,12 @@ import {
 import { createBatchQueueRunner, type BatchQueueRunnerSnapshot } from "../services/batchQueueRunner";
 import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
 import { createJobPoller } from "../services/jobPolling";
-import { RuntimeSettingsStore, type RuntimeConfigWriter } from "../services/settingsStore";
+import {
+  createDefaultRuntimeAdvancedOptions,
+  RuntimeSettingsStore,
+  type RuntimeAdvancedOptions,
+  type RuntimeConfigWriter,
+} from "../services/settingsStore";
 import {
   ensureRuntimeDirectory,
   isTauriRuntimeAvailable,
@@ -81,6 +87,10 @@ export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>("single");
   const [url, setUrl] = useState("");
   const [outputPath, setOutputPath] = useState(readPersistedOutputPathFromStorage());
+  const [advancedOptionsExpanded, setAdvancedOptionsExpanded] = useState(false);
+  const [advancedOptions, setAdvancedOptions] = useState<RuntimeAdvancedOptions>(
+    createDefaultRuntimeAdvancedOptions(),
+  );
   const [configVersion, setConfigVersion] = useState(1);
   const [backendReadyConfigVersion, setBackendReadyConfigVersion] = useState(1);
   const [backendStatus, setBackendStatus] = useState<"starting" | "ready" | "error" | "stopped">("starting");
@@ -138,6 +148,7 @@ export function App(): JSX.Element {
       if (!outputPathManuallyEdited.current) {
         setOutputPath(snapshot.outputPath);
       }
+      setAdvancedOptions(snapshot.advancedOptions);
       setConfigVersion(snapshot.configVersion);
     }).catch((error) => {
       if (!mounted) {
@@ -257,7 +268,7 @@ export function App(): JSX.Element {
         return "Submitting download request...";
       }
       if (!configReadyForSubmit) {
-        return "Start is disabled while backend restarts with the updated output folder.";
+        return "Start is disabled while backend restarts with updated runtime settings.";
       }
       if (!backendReadyForSubmit) {
         return "Start is disabled while backend readiness is pending.";
@@ -525,6 +536,21 @@ export function App(): JSX.Element {
     }
   };
 
+  const handleAdvancedOptionsChange = (patch: Partial<RuntimeAdvancedOptions>): void => {
+    setConfigVersion((version) => version + 1);
+    void settingsStore
+      .updateAdvancedOptions(patch)
+      .then((snapshot) => {
+        setAdvancedOptions(snapshot.advancedOptions);
+        setConfigVersion(snapshot.configVersion);
+        setBackendReadyConfigVersion(snapshot.backendReadyConfigVersion);
+      })
+      .catch(() => {
+        setSubmitMessage("Could not apply advanced controls. Check values and try again.");
+        setSubmitMessageTone("error");
+      });
+  };
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -603,6 +629,13 @@ export function App(): JSX.Element {
                 />
               )}
             </section>
+
+        <AdvancedOptionsPanel
+          expanded={advancedOptionsExpanded}
+          options={advancedOptions}
+          onToggle={() => setAdvancedOptionsExpanded((expanded) => !expanded)}
+          onChange={handleAdvancedOptionsChange}
+        />
 
         <JobStatusPanel
           activeJobId={activeJobId}

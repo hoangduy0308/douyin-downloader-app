@@ -93,6 +93,24 @@ import { App } from "../app/App";
       expect(screen.getByRole("heading", { name: "Active job status" })).toBeInTheDocument();
     });
 
+    it("keeps advanced controls collapsed by default and expands on demand", () => {
+      render(<App />);
+
+      const toggle = screen.getByRole("button", { name: "Advanced controls" });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByLabelText("Music assets")).not.toBeInTheDocument();
+
+      fireEvent.click(toggle);
+
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByLabelText("Music assets")).toBeInTheDocument();
+      expect(screen.getByLabelText("Retry count")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Transcript")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Comments")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Live")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Search")).not.toBeInTheDocument();
+    });
+
     it("loads persisted output folder before starting managed backend lifecycle", async () => {
       mocks.runtimeAvailable = true;
       window.localStorage.setItem(OUTPUT_PATH_STORAGE_KEY, "D:\\Persisted\\Downloads");
@@ -109,6 +127,31 @@ import { App } from "../app/App";
           }),
         );
       });
+    });
+
+    it("writes scoped advanced controls into managed config without deferred keys", async () => {
+      render(<App />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Advanced controls" }));
+      fireEvent.change(screen.getByLabelText("Retry count"), {
+        target: { value: "6" },
+      });
+
+      await waitFor(() => {
+        expect(mocks.writeManagedConfigAtomicMock).toHaveBeenCalled();
+      });
+      const latestCall =
+        mocks.writeManagedConfigAtomicMock.mock.calls[mocks.writeManagedConfigAtomicMock.mock.calls.length - 1];
+      const latestYaml = latestCall[1] as string;
+
+      expect(latestYaml).toContain("retry_times: 6");
+      expect(latestYaml).toContain("browser_fallback:");
+      expect(latestYaml).not.toContain("comments:");
+      expect(latestYaml).not.toContain("transcript:");
+      expect(latestYaml).not.toContain("live:");
+      expect(latestYaml).not.toContain("notifications:");
+      expect(latestYaml).not.toContain("server:");
+      expect(latestYaml).not.toContain("allmix");
     });
 
   it("builds queue rows from pasted multiline urls while preserving equal-weight mode controls", () => {
@@ -672,7 +715,39 @@ import { App } from "../app/App";
 
     expect(screen.getByRole("button", { name: "Start download" })).toBeDisabled();
     expect(
-      screen.getByText("Start is disabled while backend restarts with the updated output folder."),
+      screen.getByText("Start is disabled while backend restarts with updated runtime settings."),
+    ).toBeInTheDocument();
+  });
+
+  it("blocks submit while backend restarts after advanced settings change", async () => {
+    mocks.runtimeAvailable = true;
+    mocks.lifecycleStartMock
+      .mockResolvedValueOnce({
+        state: "ready",
+        detail: "Backend is ready.",
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise(() => {
+            // keep pending
+          }),
+      );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Start download" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Advanced controls" }));
+    fireEvent.click(screen.getByLabelText("Music assets"));
+
+    await waitFor(() => {
+      expect(mocks.writeManagedConfigAtomicMock).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.getByRole("button", { name: "Start download" })).toBeDisabled();
+    expect(
+      screen.getByText("Start is disabled while backend restarts with updated runtime settings."),
     ).toBeInTheDocument();
   });
 

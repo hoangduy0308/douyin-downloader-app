@@ -288,6 +288,50 @@ button:disabled {
   grid-column: span 2;
 }
 
+.advanced-options-card {
+  grid-column: span 2;
+}
+
+.advanced-options-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.advanced-options-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.advanced-options-grid fieldset {
+  border: 1px solid #d1dce6;
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.advanced-options-grid legend {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.advanced-options-grid label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #223246;
+  font-size: 0.9rem;
+}
+
+.advanced-options-grid input[type="number"],
+.advanced-options-grid input[type="text"] {
+  width: 100%;
+}
+
 .diagnostics-toolbar {
   display: flex;
   align-items: center;
@@ -327,6 +371,10 @@ button:disabled {
   }
 
   .diagnostics-card {
+    grid-column: span 1;
+  }
+
+  .advanced-options-card {
     grid-column: span 1;
   }
 }

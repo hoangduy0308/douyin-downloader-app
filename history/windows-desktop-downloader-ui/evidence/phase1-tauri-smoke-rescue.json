@@ -1,0 +1,33 @@
+﻿{
+    "timestamp":  "2026-05-08T04:58:14.7141398+07:00",
+    "tauri_pid":  12228,
+    "tauri_running":  true,
+    "health_ok":  true,
+    "health_probes":  [
+                          {
+                              "at":  "2026-05-08T04:58:12.3205344+07:00",
+                              "ok":  false,
+                              "error":  "Unable to connect to the remote server"
+                          },
+                          {
+                              "at":  "2026-05-08T04:58:14.3751528+07:00",
+                              "ok":  true,
+                              "body":  {
+                                           "status":  "ok"
+                                       }
+                          }
+                      ],
+    "managed_python":  {
+                           "ProcessId":  36384,
+                           "CommandLine":  "\"python\" run.py --serve --serve-host 127.0.0.1 --serve-port 8787 --config F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml --path C:\\DouyinDownloads"
+                       },
+    "app_process":  {
+                        "ProcessId":  27092,
+                        "CommandLine":  "\"target\\debug\\douyin-downloader-app.exe\"",
+                        "ExecutablePath":  "F:\\Work\\DouyinDownload\\douyin-downloader-app\\src-tauri\\target\\debug\\douyin-downloader-app.exe"
+                    },
+    "out_log":  "history\\windows-desktop-downloader-ui\\evidence\\phase1-tauri-smoke-rescue.out.log",
+    "err_log":  "history\\windows-desktop-downloader-ui\\evidence\\phase1-tauri-smoke-rescue.err.log",
+    "out_tail":  "\n\u003e douyin-downloader-app@0.1.0 tauri\n\u003e tauri dev\n\n\n\u003e douyin-downloader-app@0.1.0 dev\n\u003e vite\n\n\n  \u001b[32m\u001b[1mVITE\u001b[22m v5.4.21\u001b[39m  \u001b[2mready in \u001b[0m\u001b[1m351\u001b[22m\u001b[2m\u001b[0m ms\u001b[22m\n\n  \u001b[32mâžœ\u001b[39m  \u001b[1mLocal\u001b[22m:   \u001b[36mhttp://localhost:\u001b[1m1420\u001b[22m/\u001b[39m\n\u001b[2m  \u001b[32mâžœ\u001b[39m  \u001b[1mNetwork\u001b[22m\u001b[2m: use \u001b[22m\u001b[1m--host\u001b[22m\u001b[2m to expose\u001b[22m",
+    "err_tail":  "     Running BeforeDevCommand (`npm run dev`)\n     Running DevCommand (`cargo  run --no-default-features --color always --`)\n        Info Watching F:\\Work\\DouyinDownload\\douyin-downloader-app\\src-tauri for changes...\n\u001b[1m\u001b[92m   Compiling\u001b[0m douyin-downloader-app v0.1.0 (F:\\Work\\DouyinDownload\\douyin-downloader-app\\src-tauri)\n\u001b[1m\u001b[96m    Building\u001b[0m [=======================\u003e ] 352/354: douyi...\n\u001b[1m\u001b[96m    Building\u001b[0m [=======================\u003e ] 353/354: douyi...\n                                                            \n\u001b[1m\u001b[92m    Finished\u001b[0m \u001b]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\u001b\\`dev` profile [unoptimized + debuginfo]\u001b]8;;\u001b\\ target(s) in 3.70s\n\u001b[1m\u001b[92m     Running\u001b[0m `target\\debug\\douyin-downloader-app.exe`"
+}

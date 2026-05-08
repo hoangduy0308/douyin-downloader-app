@@ -1,0 +1,66 @@
+Traceback (most recent call last):
+  File "F:\Work\DouyinDownload\douyin-downloader\cli\main.py", line 381, in main
+    asyncio.run(main_async(args))
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 654, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "F:\Work\DouyinDownload\douyin-downloader\cli\main.py", line 132, in main_async
+    display.show_banner()
+  File "F:\Work\DouyinDownload\douyin-downloader\cli\progress_display.py", line 44, in show_banner
+    self._active_console().print(banner, style="bold cyan")
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 1704, in print
+    with self:
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 864, in __exit__
+    self._exit_buffer()
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 820, in _exit_buffer
+    self._check_buffer()
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 2055, in _check_buffer
+    self._write_buffer()
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 2091, in _write_buffer
+    legacy_windows_render(buffer, LegacyWindowsTerm(self.file))
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\_windows_renderer.py", line 17, in legacy_windows_render
+    term.write_styled(text, style)
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\_win32_console.py", line 441, in write_styled
+    self.write_text(text)
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\_win32_console.py", line 402, in write_text
+    self.write(text)
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 0-43: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "F:\Work\DouyinDownload\douyin-downloader\run.py", line 13, in <module>
+    main()
+  File "F:\Work\DouyinDownload\douyin-downloader\cli\main.py", line 386, in main
+    display.print_error(f"Fatal error: {e}")
+  File "F:\Work\DouyinDownload\douyin-downloader\cli\progress_display.py", line 256, in print_error
+    self._active_console().print(f"[red]\u2717[/red] {message}")
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 1704, in print
+    with self:
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 864, in __exit__
+    self._exit_buffer()
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 820, in _exit_buffer
+    self._check_buffer()
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 2055, in _check_buffer
+    self._write_buffer()
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\console.py", line 2091, in _write_buffer
+    legacy_windows_render(buffer, LegacyWindowsTerm(self.file))
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\_windows_renderer.py", line 17, in legacy_windows_render
+    term.write_styled(text, style)
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\_win32_console.py", line 441, in write_styled
+    self.write_text(text)
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\site-packages\rich\_win32_console.py", line 402, in write_text
+    self.write(text)
+  File "C:\Users\hdi\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 0-43: character maps to <undefined>

@@ -19,6 +19,19 @@ interface OpenOutputFolderPayload {
   };
 }
 
+interface SettingsEnsureDirectoryPayload {
+  request: {
+    path: string;
+  };
+}
+
+interface SettingsWriteConfigAtomicPayload {
+  request: {
+    path: string;
+    contents: string;
+  };
+}
+
 export function isTauriRuntimeAvailable(): boolean {
   return isTauri();
 }
@@ -54,4 +67,27 @@ export async function openOutputFolder(path: string): Promise<void> {
       path,
     },
   } satisfies OpenOutputFolderPayload);
+}
+
+export async function ensureRuntimeDirectory(path: string): Promise<void> {
+  if (!isTauri()) {
+    return;
+  }
+  await invoke("settings_ensure_directory", {
+    request: {
+      path,
+    },
+  } satisfies SettingsEnsureDirectoryPayload);
+}
+
+export async function writeManagedConfigAtomic(path: string, contents: string): Promise<void> {
+  if (!isTauri()) {
+    return;
+  }
+  await invoke("settings_write_config_atomic", {
+    request: {
+      path,
+      contents,
+    },
+  } satisfies SettingsWriteConfigAtomicPayload);
 }

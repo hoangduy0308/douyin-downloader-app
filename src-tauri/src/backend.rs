@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BackendDiagnostic {
@@ -95,6 +97,19 @@ pub struct BackendStopResponse {
 #[serde(rename_all = "camelCase")]
 pub struct OpenOutputFolderRequest {
     pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsEnsureDirectoryRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsWriteConfigAtomicRequest {
+    pub path: String,
+    pub contents: String,
 }
 
 #[tauri::command]
@@ -267,6 +282,79 @@ pub fn open_output_folder(
         .spawn()
         .map_err(|error| format!("Failed to open output folder '{}': {}", path, error))?;
     manager.push_diagnostic("info", "filesystem", format!("Opened output folder: {}", path));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn settings_ensure_directory(request: SettingsEnsureDirectoryRequest) -> Result<(), String> {
+    let path = request.path.trim().to_owned();
+    if path.is_empty() {
+        return Err("Directory path is empty".to_owned());
+    }
+    let directory = Path::new(&path);
+    if !directory.is_absolute() {
+        return Err(format!("Directory path must be absolute: {}", path));
+    }
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("Failed to ensure directory '{}': {}", path, error))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn settings_write_config_atomic(request: SettingsWriteConfigAtomicRequest) -> Result<(), String> {
+    let path = request.path.trim().to_owned();
+    if path.is_empty() {
+        return Err("Managed config path is empty".to_owned());
+    }
+
+    let target_path = PathBuf::from(&path);
+    if !target_path.is_absolute() {
+        return Err(format!("Managed config path must be absolute: {}", path));
+    }
+
+    let parent = target_path
+        .parent()
+        .ok_or_else(|| format!("Managed config path must have a parent directory: {}", path))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "Failed to ensure managed config parent directory '{}': {}",
+            parent.display(),
+            error
+        )
+    })?;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let temp_path = parent.join(format!(".managed-config-{}-{}.tmp", std::process::id(), nonce));
+
+    fs::write(&temp_path, request.contents.as_bytes()).map_err(|error| {
+        format!(
+            "Failed to write managed config temp file '{}': {}",
+            temp_path.display(),
+            error
+        )
+    })?;
+
+    if target_path.exists() {
+        fs::remove_file(&target_path).map_err(|error| {
+            format!(
+                "Failed to replace existing managed config '{}': {}",
+                target_path.display(),
+                error
+            )
+        })?;
+    }
+
+    fs::rename(&temp_path, &target_path).map_err(|error| {
+        format!(
+            "Failed to commit managed config '{}': {}",
+            target_path.display(),
+            error
+        )
+    })?;
+
     Ok(())
 }
 

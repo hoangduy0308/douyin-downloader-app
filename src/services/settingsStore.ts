@@ -10,6 +10,7 @@ export interface RuntimeConfigWriter {
   resolveDefaultOutputPath(): Promise<string>;
   ensureDirectory(path: string): Promise<void>;
   writeConfigAtomic(path: string, contents: string): Promise<void>;
+  persistOutputPath?(path: string): Promise<void>;
 }
 
 export class RuntimeSettingsStore {
@@ -23,11 +24,11 @@ export class RuntimeSettingsStore {
     }
 
     const configPath = await this.writer.resolveManagedConfigPath();
-    assertAbsolutePath(configPath, "Managed config path must be absolute");
+    assertWindowsSafeAbsolutePath(configPath, "Managed config path must be a Windows absolute path");
     assertManagedConfigPath(configPath);
 
     const outputPath = await this.writer.resolveDefaultOutputPath();
-    assertAbsolutePath(outputPath, "Output path must be absolute");
+    assertWindowsSafeAbsolutePath(outputPath, "Output path must be a Windows absolute path");
 
     await this.writer.ensureDirectory(outputPath);
     await this.writer.writeConfigAtomic(configPath, serializeRuntimeConfig(outputPath));
@@ -46,7 +47,7 @@ export class RuntimeSettingsStore {
       await this.initialize();
     }
     const current = this.state as RuntimeSettingsSnapshot;
-    assertAbsolutePath(nextOutputPath, "Output path must be absolute");
+    assertWindowsSafeAbsolutePath(nextOutputPath, "Output path must be a Windows absolute path");
 
     if (nextOutputPath === current.outputPath) {
       return this.snapshot();
@@ -54,6 +55,7 @@ export class RuntimeSettingsStore {
 
     await this.writer.ensureDirectory(nextOutputPath);
     await this.writer.writeConfigAtomic(current.configPath, serializeRuntimeConfig(nextOutputPath));
+    await this.writer.persistOutputPath?.(nextOutputPath);
 
     this.state = {
       ...current,
@@ -89,7 +91,7 @@ export class RuntimeSettingsStore {
 }
 
 export function serializeRuntimeConfig(outputPath: string): string {
-  assertAbsolutePath(outputPath, "Output path must be absolute");
+  assertWindowsSafeAbsolutePath(outputPath, "Output path must be a Windows absolute path");
   return `path: ${outputPath}\n`;
 }
 
@@ -103,17 +105,25 @@ function assertManagedConfigPath(path: string): void {
   }
 }
 
-function assertAbsolutePath(path: string, message: string): void {
-  if (!isAbsolutePath(path)) {
+function assertWindowsSafeAbsolutePath(path: string, message: string): void {
+  if (!isWindowsSafeAbsolutePath(path)) {
     throw new Error(message);
   }
 }
 
-function isAbsolutePath(path: string): boolean {
+export function isWindowsSafeAbsolutePath(path: string): boolean {
+  if (path.includes("\0")) {
+    return false;
+  }
+  if (path.includes("/")) {
+    return false;
+  }
+  if (path.includes("\\..\\") || path.endsWith("\\..") || path.startsWith("..\\")) {
+    return false;
+  }
   const windowsDriveAbsolute = /^[a-zA-Z]:[\\/]/.test(path);
   const windowsUncAbsolute = /^\\\\[^\\]+\\[^\\]+/.test(path);
-  const unixAbsolute = path.startsWith("/");
-  return windowsDriveAbsolute || windowsUncAbsolute || unixAbsolute;
+  return windowsDriveAbsolute || windowsUncAbsolute;
 }
 
 function normalizeWindowsLikePath(path: string): string {

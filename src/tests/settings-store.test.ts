@@ -88,8 +88,28 @@ describe("RuntimeSettingsStore", () => {
     await store.initialize();
 
     await expect(store.updateOutputPath(".\\relative")).rejects.toThrow(
-      "Output path must be absolute",
+      "Output path must be a Windows absolute path",
     );
+  });
+
+  it("rejects non-windows absolute output folders during initialize", async () => {
+    const writer = new FakeRuntimeConfigWriter(
+      "C:\\Users\\hdi\\AppData\\Local\\DouyinDownloaderApp\\runtime\\managed-config.yml",
+      "/tmp/downloads",
+    );
+    const store = new RuntimeSettingsStore(writer);
+
+    await expect(store.initialize()).rejects.toThrow("Output path must be a Windows absolute path");
+  });
+
+  it("rejects non-windows absolute managed config paths during initialize", async () => {
+    const writer = new FakeRuntimeConfigWriter(
+      "/tmp/managed-config.yml",
+      "C:\\Users\\hdi\\AppData\\Local\\DouyinDownloaderApp\\downloads",
+    );
+    const store = new RuntimeSettingsStore(writer);
+
+    await expect(store.initialize()).rejects.toThrow("Managed config path must be a Windows absolute path");
   });
 
   it("tracks backend readiness against current config version", async () => {

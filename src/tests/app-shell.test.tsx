@@ -7,8 +7,12 @@ const mocks = vi.hoisted(() => ({
   runtimeAvailable: false,
   lifecycleStartMock: vi.fn(),
   openOutputFolderMock: vi.fn(),
+  ensureRuntimeDirectoryMock: vi.fn(),
+  writeManagedConfigAtomicMock: vi.fn(),
   readImportedBatchTextMock: vi.fn(),
 }));
+
+const OUTPUT_PATH_STORAGE_KEY = "douyin-downloader-app.output-path";
 
 vi.mock("../services/backendClient", () => ({
   createBackendClient: () => ({
@@ -22,6 +26,9 @@ vi.mock("../services/backendClient", () => ({
 vi.mock("../services/tauriBackendRuntime", () => ({
   isTauriRuntimeAvailable: () => mocks.runtimeAvailable,
   openOutputFolder: (path: string) => mocks.openOutputFolderMock(path),
+  ensureRuntimeDirectory: (path: string) => mocks.ensureRuntimeDirectoryMock(path),
+  writeManagedConfigAtomic: (path: string, contents: string) =>
+    mocks.writeManagedConfigAtomicMock(path, contents),
   TauriBackendRuntime: class {},
 }));
 
@@ -51,24 +58,29 @@ vi.mock("../services/backendLifecycle", () => {
 
 import { App } from "../app/App";
 
-describe("App shell", () => {
-  beforeEach(() => {
+  describe("App shell", () => {
+    beforeEach(() => {
     vi.useRealTimers();
     mocks.runtimeAvailable = false;
     mocks.createDownloadJobMock.mockReset();
     mocks.getJobMock.mockReset();
-    mocks.lifecycleStartMock.mockReset();
-    mocks.openOutputFolderMock.mockReset();
-    mocks.readImportedBatchTextMock.mockReset();
+      mocks.lifecycleStartMock.mockReset();
+      mocks.openOutputFolderMock.mockReset();
+      mocks.ensureRuntimeDirectoryMock.mockReset();
+      mocks.writeManagedConfigAtomicMock.mockReset();
+      mocks.readImportedBatchTextMock.mockReset();
     mocks.lifecycleStartMock.mockResolvedValue({
       state: "ready",
       detail: "Backend is ready.",
     });
-    mocks.openOutputFolderMock.mockResolvedValue(undefined);
-    mocks.readImportedBatchTextMock.mockResolvedValue("");
-  });
+      mocks.openOutputFolderMock.mockResolvedValue(undefined);
+      mocks.ensureRuntimeDirectoryMock.mockResolvedValue(undefined);
+      mocks.writeManagedConfigAtomicMock.mockResolvedValue(undefined);
+      mocks.readImportedBatchTextMock.mockResolvedValue("");
+      window.localStorage.clear();
+    });
 
-  it("renders first-screen workflow controls with single and batch tabs", () => {
+    it("renders first-screen workflow controls with single and batch tabs", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Douyin Downloader" })).toBeInTheDocument();
@@ -78,8 +90,26 @@ describe("App shell", () => {
     expect(screen.getByLabelText("Download location")).toBeInTheDocument();
     expect(screen.getByLabelText("Douyin URL")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start download" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Active job status" })).toBeInTheDocument();
-  });
+      expect(screen.getByRole("heading", { name: "Active job status" })).toBeInTheDocument();
+    });
+
+    it("loads persisted output folder before starting managed backend lifecycle", async () => {
+      mocks.runtimeAvailable = true;
+      window.localStorage.setItem(OUTPUT_PATH_STORAGE_KEY, "D:\\Persisted\\Downloads");
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Download location")).toHaveValue("D:\\Persisted\\Downloads");
+      });
+      await waitFor(() => {
+        expect(mocks.lifecycleStartMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            outputPath: "D:\\Persisted\\Downloads",
+          }),
+        );
+      });
+    });
 
   it("builds queue rows from pasted multiline urls while preserving equal-weight mode controls", () => {
     render(<App />);

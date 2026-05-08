@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BackendStatusCard } from "../components/BackendStatusCard";
 import { BatchDownloadPanel } from "../components/BatchDownloadPanel";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
@@ -19,7 +19,14 @@ import {
 import { createBatchQueueRunner, type BatchQueueRunnerSnapshot } from "../services/batchQueueRunner";
 import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
 import { createJobPoller } from "../services/jobPolling";
-import { isTauriRuntimeAvailable, openOutputFolder, TauriBackendRuntime } from "../services/tauriBackendRuntime";
+import { RuntimeSettingsStore, type RuntimeConfigWriter } from "../services/settingsStore";
+import {
+  ensureRuntimeDirectory,
+  isTauriRuntimeAvailable,
+  openOutputFolder,
+  TauriBackendRuntime,
+  writeManagedConfigAtomic,
+} from "../services/tauriBackendRuntime";
 
 type Mode = "single" | "batch";
 const EMPTY_BATCH_TOTALS: BatchQueueTotals = {
@@ -32,11 +39,48 @@ const EMPTY_BATCH_TOTALS: BatchQueueTotals = {
   retryEligible: 0,
   readyToSubmit: 0,
 };
+const OUTPUT_PATH_STORAGE_KEY = "douyin-downloader-app.output-path";
+const MANAGED_CONFIG_PATH = "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml";
+const DEFAULT_OUTPUT_PATH = "C:\\DouyinDownloads";
+
+function readPersistedOutputPathFromStorage(): string {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return DEFAULT_OUTPUT_PATH;
+  }
+  const persisted = window.localStorage.getItem(OUTPUT_PATH_STORAGE_KEY);
+  if (!persisted) {
+    return DEFAULT_OUTPUT_PATH;
+  }
+  return persisted;
+}
+
+function createRuntimeSettingsWriter(): RuntimeConfigWriter {
+  return {
+    async resolveManagedConfigPath(): Promise<string> {
+      return MANAGED_CONFIG_PATH;
+    },
+    async resolveDefaultOutputPath(): Promise<string> {
+      return readPersistedOutputPathFromStorage();
+    },
+    async ensureDirectory(path: string): Promise<void> {
+      await ensureRuntimeDirectory(path);
+    },
+    async writeConfigAtomic(path: string, contents: string): Promise<void> {
+      await writeManagedConfigAtomic(path, contents);
+    },
+    async persistOutputPath(path: string): Promise<void> {
+      if (typeof window === "undefined" || !window.localStorage) {
+        return;
+      }
+      window.localStorage.setItem(OUTPUT_PATH_STORAGE_KEY, path);
+    },
+  };
+}
 
 export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>("single");
   const [url, setUrl] = useState("");
-  const [outputPath, setOutputPath] = useState("C:\\DouyinDownloads");
+  const [outputPath, setOutputPath] = useState(readPersistedOutputPathFromStorage());
   const [configVersion, setConfigVersion] = useState(1);
   const [backendReadyConfigVersion, setBackendReadyConfigVersion] = useState(1);
   const [backendStatus, setBackendStatus] = useState<"starting" | "ready" | "error" | "stopped">("starting");
@@ -61,6 +105,10 @@ export function App(): JSX.Element {
   const [batchStarted, setBatchStarted] = useState(false);
   const [batchMessage, setBatchMessage] = useState("Paste multiline URLs or import a text file, then build the queue.");
   const [batchMessageTone, setBatchMessageTone] = useState<"error" | "hint">("hint");
+  const outputPathManuallyEdited = useRef(false);
+  const settingsStore = useMemo(() => {
+    return new RuntimeSettingsStore(createRuntimeSettingsWriter());
+  }, []);
   const backendClient = useMemo(() => createBackendClient({ baseUrl: "http://127.0.0.1:8787" }), []);
   const batchQueueRunner = useMemo(() => {
     return createBatchQueueRunner({
@@ -80,6 +128,29 @@ export function App(): JSX.Element {
     }
     return "Batch queue mode validates URLs and prepares rows before execution.";
   }, [mode]);
+
+  useEffect(() => {
+    let mounted = true;
+    void settingsStore.initialize().then((snapshot) => {
+      if (!mounted) {
+        return;
+      }
+      if (!outputPathManuallyEdited.current) {
+        setOutputPath(snapshot.outputPath);
+      }
+      setConfigVersion(snapshot.configVersion);
+    }).catch((error) => {
+      if (!mounted) {
+        return;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      setBackendStatus("error");
+      setBackendDetail(`Settings initialization failed: ${detail}`);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [settingsStore]);
 
   useEffect(() => {
     if (!isTauriRuntimeAvailable()) {
@@ -114,19 +185,19 @@ export function App(): JSX.Element {
         if (!mounted) {
           return;
         }
-        setBackendStatus(ready.state);
-        setBackendDetail(ready.detail);
-        setBackendDiagnostics(lifecycle.getDiagnostics().map((entry) => entry.message));
-        if (ready.state === "ready") {
-          setBackendReadyConfigVersion(configVersion);
-        }
-      });
+          setBackendStatus(ready.state);
+          setBackendDetail(ready.detail);
+          setBackendDiagnostics(lifecycle.getDiagnostics().map((entry) => entry.message));
+          if (ready.state === "ready") {
+            setBackendReadyConfigVersion(configVersion);
+          }
+        });
 
     return () => {
       mounted = false;
       void lifecycle.stop();
     };
-  }, [outputPath, configVersion]);
+    }, [configVersion, outputPath, settingsStore]);
 
   useEffect(() => {
     if (!activeJobId) {
@@ -179,20 +250,20 @@ export function App(): JSX.Element {
 
   const backendReadyForSubmit = backendStatus === "ready";
   const configReadyForSubmit = configVersion === backendReadyConfigVersion;
-  const submitDisabled = !backendReadyForSubmit || !configReadyForSubmit || isSubmitting;
+    const submitDisabled = !backendReadyForSubmit || !configReadyForSubmit || isSubmitting;
 
   const submitStatusMessage = useMemo(() => {
-    if (isSubmitting) {
-      return "Submitting download request...";
-    }
-    if (!configReadyForSubmit) {
-      return "Start is disabled while backend restarts with the updated output folder.";
-    }
-    if (!backendReadyForSubmit) {
-      return "Start is disabled while backend readiness is pending.";
-    }
-    return "";
-  }, [backendReadyForSubmit, configReadyForSubmit, isSubmitting]);
+      if (isSubmitting) {
+        return "Submitting download request...";
+      }
+      if (!configReadyForSubmit) {
+        return "Start is disabled while backend restarts with the updated output folder.";
+      }
+      if (!backendReadyForSubmit) {
+        return "Start is disabled while backend readiness is pending.";
+      }
+      return "";
+    }, [backendReadyForSubmit, configReadyForSubmit, isSubmitting]);
   const batchHasRunningRows = batchRows.some((row) => row.status === "running");
   const batchHasWaitingRows = batchRows.some((row) => row.status === "waiting");
   const batchHasTerminalRows = batchRows.some((row) => row.status === "success" || row.status === "failed");
@@ -340,10 +411,26 @@ export function App(): JSX.Element {
     }
   };
 
-  const handleOutputPathChange = (nextPath: string): void => {
-    setOutputPath(nextPath);
-    setConfigVersion((version) => version + 1);
-  };
+    const handleOutputPathChange = (nextPath: string): void => {
+      outputPathManuallyEdited.current = true;
+      if (nextPath.trim().length === 0) {
+        setOutputPath("");
+        return;
+      }
+      setOutputPath(nextPath);
+      setConfigVersion((version) => version + 1);
+      void settingsStore
+        .updateOutputPath(nextPath)
+        .then((snapshot) => {
+          setOutputPath(snapshot.outputPath);
+          setConfigVersion(snapshot.configVersion);
+          setBackendReadyConfigVersion(snapshot.backendReadyConfigVersion);
+        })
+        .catch(() => {
+          setSubmitMessage("Output path must be a Windows absolute path.");
+          setSubmitMessageTone("error");
+        });
+    };
 
   const handleBuildBatchQueue = (text: string): void => {
     batchQueueRunner.stop();

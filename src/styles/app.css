@@ -288,6 +288,43 @@ button:disabled {
   grid-column: span 2;
 }
 
+.history-card {
+  grid-column: span 2;
+}
+
+.history-list {
+  margin: 12px 0 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.history-item {
+  border: 1px solid #d1dce6;
+  border-radius: 10px;
+  padding: 10px;
+  background: #f7fafd;
+}
+
+.history-item p {
+  margin: 0;
+}
+
+.history-url {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.history-meta {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: #4f657a;
+  font-size: 0.85rem;
+}
+
 .advanced-options-card {
   grid-column: span 2;
 }
@@ -371,6 +408,10 @@ button:disabled {
   }
 
   .diagnostics-card {
+    grid-column: span 1;
+  }
+
+  .history-card {
     grid-column: span 1;
   }
 

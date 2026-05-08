@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackendStatusCard } from "../components/BackendStatusCard";
 import { BatchDownloadPanel } from "../components/BatchDownloadPanel";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
+import { HistoryPanel } from "../components/HistoryPanel";
 import { JobStatusPanel } from "../components/JobStatusPanel";
 import { OutputFolderControl } from "../components/OutputFolderControl";
 import { SingleDownloadPanel } from "../components/SingleDownloadPanel";
@@ -25,6 +26,13 @@ import {
 } from "../services/cookieRecovery";
 import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
 import { createJobPoller } from "../services/jobPolling";
+import {
+  AppHistoryStore,
+  type HistoryDiagnosticEvent,
+  type HistoryEntry,
+  type HistoryFileStore,
+  type HistoryEntryUpsertInput,
+} from "../services/historyStore";
 import {
   createDefaultRuntimeAdvancedOptions,
   RuntimeSettingsStore,
@@ -57,6 +65,7 @@ const DEFAULT_OUTPUT_PATH = "C:\\DouyinDownloads";
 const SINGLE_RETRY_GUIDANCE = "Retry this job after cookie recovery.";
 const BATCH_RETRY_GUIDANCE = "Use Retry failed or row Retry after cookie recovery.";
 const COOKIE_FALLBACK_GUIDANCE = "Manual/import cookie fallback remains available.";
+const HISTORY_STORAGE_KEY = "douyin-downloader-app.history.v1";
 
 function readPersistedOutputPathFromStorage(): string {
   if (typeof window === "undefined" || !window.localStorage) {
@@ -92,6 +101,23 @@ function createRuntimeSettingsWriter(): RuntimeConfigWriter {
   };
 }
 
+function createHistoryFileStore(): HistoryFileStore {
+  return {
+    async read(): Promise<string | null> {
+      if (typeof window === "undefined" || !window.localStorage) {
+        return null;
+      }
+      return window.localStorage.getItem(HISTORY_STORAGE_KEY);
+    },
+    async write(nextContents: string): Promise<void> {
+      if (typeof window === "undefined" || !window.localStorage) {
+        return;
+      }
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, nextContents);
+    },
+  };
+}
+
 export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>("single");
   const [url, setUrl] = useState("");
@@ -112,9 +138,11 @@ export function App(): JSX.Element {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [activeJobState, setActiveJobState] = useState<JobState | null>(null);
+  const [activeJobUrl, setActiveJobUrl] = useState<string | null>(null);
   const [jobPanelMessage, setJobPanelMessage] = useState<string>("");
   const [jobPanelTone, setJobPanelTone] = useState<"error" | "hint">("hint");
   const [jobDiagnostics, setJobDiagnostics] = useState<string[]>([]);
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [singleCookieRecoveryInProgress, setSingleCookieRecoveryInProgress] = useState(false);
   const [batchCookieRecoveryInProgress, setBatchCookieRecoveryInProgress] = useState(false);
   const [openingOutputFolder, setOpeningOutputFolder] = useState(false);
@@ -126,7 +154,10 @@ export function App(): JSX.Element {
   const [batchStarted, setBatchStarted] = useState(false);
   const [batchMessage, setBatchMessage] = useState("Paste multiline URLs or import a text file, then build the queue.");
   const [batchMessageTone, setBatchMessageTone] = useState<"error" | "hint">("hint");
+  const [batchRunId, setBatchRunId] = useState("batch-run-0");
   const outputPathManuallyEdited = useRef(false);
+  const batchRunCounter = useRef(0);
+  const recordedBatchHistoryRef = useRef<Record<string, string>>({});
   const settingsStore = useMemo(() => {
     return new RuntimeSettingsStore(createRuntimeSettingsWriter());
   }, []);
@@ -145,6 +176,24 @@ export function App(): JSX.Element {
       },
     });
   }, [backendClient]);
+  const historyStore = useMemo(() => {
+    return new AppHistoryStore({
+      fileStore: createHistoryFileStore(),
+      onDiagnostic: (event: HistoryDiagnosticEvent) => {
+        setJobDiagnostics((existing) =>
+          existing.concat(`history ${event.action}: ${event.message}`),
+        );
+      },
+    });
+  }, []);
+
+  const upsertHistoryEntry = useCallback(
+    async (input: HistoryEntryUpsertInput): Promise<void> => {
+      const entries = await historyStore.upsert(input);
+      setHistoryEntries(entries);
+    },
+    [historyStore],
+  );
 
   const modeDescription = useMemo(() => {
     if (mode === "single") {
@@ -225,6 +274,27 @@ export function App(): JSX.Element {
     }, [configVersion, outputPath, settingsStore]);
 
   useEffect(() => {
+    let mounted = true;
+    void historyStore
+      .load()
+      .then((entries) => {
+        if (!mounted) {
+          return;
+        }
+        setHistoryEntries(entries);
+      })
+      .catch(() => {
+        if (!mounted) {
+          return;
+        }
+        setHistoryEntries([]);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [historyStore]);
+
+  useEffect(() => {
     if (!activeJobId) {
       setActiveJobState(null);
       return undefined;
@@ -234,24 +304,56 @@ export function App(): JSX.Element {
       jobId: activeJobId,
       backendClient,
       pollIntervalMs: 1000,
-      onJob: (job) => {
-        setActiveJobState(job);
-        if (job.status === "success") {
-          setJobPanelMessage("Download finished successfully.");
-          setJobPanelTone("hint");
-          return;
-        }
-        if (job.status === "failed") {
+        onJob: (job) => {
+          setActiveJobState(job);
+          if (job.status === "success") {
+            setJobPanelMessage("Download finished successfully.");
+            setJobPanelTone("hint");
+            const targetUrl = activeJobUrl;
+            if (targetUrl !== null) {
+              const finishedAt = job.finishedAt ?? new Date().toISOString();
+              const outputPathValue = outputPath.trim().length > 0 ? outputPath.trim() : null;
+              void upsertHistoryEntry({
+                logicalId: `single:${job.jobId}`,
+                mode: "single",
+                url: targetUrl,
+                status: "success",
+                outputPath: outputPathValue,
+                resultLocation: outputPathValue,
+                errorSummary: null,
+                finishedAt,
+                recordedAt: finishedAt,
+              });
+            }
+            return;
+          }
+          if (job.status === "failed") {
           const mapped = mapFailedJobError(job.error);
           if (!mapped) {
             return;
           }
-          setJobPanelMessage(mapped.message);
-          setJobPanelTone("error");
-          setJobDiagnostics((existing) => existing.concat(mapped.diagnostics));
-          return;
-        }
-        setJobPanelMessage("");
+            setJobPanelMessage(mapped.message);
+            setJobPanelTone("error");
+            setJobDiagnostics((existing) => existing.concat(mapped.diagnostics));
+            const targetUrl = activeJobUrl;
+            if (targetUrl !== null) {
+              const finishedAt = job.finishedAt ?? new Date().toISOString();
+              const outputPathValue = outputPath.trim().length > 0 ? outputPath.trim() : null;
+              void upsertHistoryEntry({
+                logicalId: `single:${job.jobId}`,
+                mode: "single",
+                url: targetUrl,
+                status: "failed",
+                outputPath: outputPathValue,
+                resultLocation: outputPathValue,
+                errorSummary: mapped.message,
+                finishedAt,
+                recordedAt: finishedAt,
+              });
+            }
+            return;
+          }
+          setJobPanelMessage("");
       },
       onError: (error) => {
         const mapped = mapPollingRequestError(error);
@@ -265,13 +367,49 @@ export function App(): JSX.Element {
     return () => {
       poller.stop();
     };
-  }, [activeJobId, backendClient]);
+    }, [activeJobId, activeJobUrl, backendClient, outputPath, upsertHistoryEntry]);
 
   useEffect(() => {
     return () => {
       batchQueueRunner.stop();
     };
   }, [batchQueueRunner]);
+
+  useEffect(() => {
+    const outputPathValue = outputPath.trim().length > 0 ? outputPath.trim() : null;
+    for (const row of batchRows) {
+      if (row.status !== "success" && row.status !== "failed" && row.status !== "skipped") {
+        continue;
+      }
+      const logicalId = `batch:${batchRunId}:${row.id}`;
+      const fingerprint = `${row.status}|${row.lastError ?? ""}|${row.lastJobId ?? ""}|${row.attempt}`;
+      if (recordedBatchHistoryRef.current[logicalId] === fingerprint) {
+        continue;
+      }
+      recordedBatchHistoryRef.current[logicalId] = fingerprint;
+
+      const now = new Date().toISOString();
+      const status = row.status === "success" ? "success" : row.status === "failed" ? "failed" : "skipped";
+      const errorSummary =
+        row.status === "failed"
+          ? row.lastError ?? "Batch row failed."
+          : row.status === "skipped"
+            ? `validation:${row.skipReason ?? "skipped"}`
+            : null;
+
+      void upsertHistoryEntry({
+        logicalId,
+        mode: "batch-row",
+        url: row.normalizedUrl ?? row.sourceText,
+        status,
+        outputPath: outputPathValue,
+        resultLocation: outputPathValue,
+        errorSummary,
+        finishedAt: now,
+        recordedAt: now,
+      });
+    }
+  }, [batchRows, batchRunId, outputPath, upsertHistoryEntry]);
 
   const backendReadyForSubmit = backendStatus === "ready";
   const configReadyForSubmit = configVersion === backendReadyConfigVersion;
@@ -502,6 +640,7 @@ export function App(): JSX.Element {
     try {
       const response = await backendClient.createDownloadJob({ url: trimmedUrl });
       setActiveJobId(response.jobId);
+      setActiveJobUrl(trimmedUrl);
       setActiveJobState(null);
       setJobPanelMessage("");
       setJobDiagnostics([]);
@@ -537,6 +676,8 @@ export function App(): JSX.Element {
     };
 
   const handleBuildBatchQueue = (text: string): void => {
+    batchRunCounter.current += 1;
+    setBatchRunId(`batch-run-${batchRunCounter.current}`);
     batchQueueRunner.stop();
     setBatchStarted(false);
     setBatchSchedulingEnabled(true);
@@ -737,7 +878,7 @@ export function App(): JSX.Element {
           onChange={handleAdvancedOptionsChange}
         />
 
-        <JobStatusPanel
+          <JobStatusPanel
           activeJobId={activeJobId}
           jobState={activeJobState}
           message={jobPanelMessage}
@@ -756,9 +897,10 @@ export function App(): JSX.Element {
           onOpenOutputFolder={() => {
             void handleOpenOutputFolderFromJobStatus();
           }}
-        />
-        <DiagnosticsPanel backendDiagnostics={backendDiagnostics} jobDiagnostics={jobDiagnostics} />
-      </section>
+          />
+          <HistoryPanel entries={historyEntries} />
+          <DiagnosticsPanel backendDiagnostics={backendDiagnostics} jobDiagnostics={jobDiagnostics} />
+        </section>
       <div data-testid="backend-diagnostics-cache" hidden>
         {backendDiagnostics.join(" | ")}
       </div>

@@ -778,7 +778,7 @@ import { App } from "../app/App";
     });
   });
 
-  it("renders running and success counts from backend polling and stops on terminal status", async () => {
+    it("renders running and success counts from backend polling and stops on terminal status", async () => {
     mocks.createDownloadJobMock.mockResolvedValueOnce({
       jobId: "job-poll",
       status: "pending",
@@ -834,10 +834,155 @@ import { App } from "../app/App";
       },
       { timeout: 2500 },
     );
-    expect(mocks.getJobMock).toHaveBeenCalledTimes(2);
-  });
+      expect(mocks.getJobMock).toHaveBeenCalledTimes(2);
+    });
 
-  it("shows friendly missing-job message for polling 404 errors and keeps diagnostics separate", async () => {
+    it("records single terminal success in basic history with url time status and output path", async () => {
+      mocks.createDownloadJobMock.mockResolvedValueOnce({
+        jobId: "job-history-single",
+        status: "pending",
+      });
+      mocks.getJobMock.mockResolvedValueOnce({
+        jobId: "job-history-single",
+        status: "success",
+        submittedAt: "2026-05-08T03:00:00Z",
+        startedAt: "2026-05-08T03:00:01Z",
+        finishedAt: "2026-05-08T03:00:03Z",
+        counts: {
+          total: 1,
+          success: 1,
+          failed: 0,
+          skipped: 0,
+        },
+        error: null,
+      });
+
+      render(<App />);
+
+      fireEvent.change(screen.getByLabelText("Download location"), {
+        target: { value: "D:\\Media\\DouyinDownloads" },
+      });
+      fireEvent.change(screen.getByLabelText("Douyin URL"), {
+        target: { value: "https://www.douyin.com/video/history-single" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Download finished successfully.")).toBeInTheDocument();
+      });
+
+      const historyPanel = screen.getByRole("region", { name: "History panel" });
+      expect(within(historyPanel).getByText("https://www.douyin.com/video/history-single")).toBeInTheDocument();
+      expect(within(historyPanel).getByText("single")).toBeInTheDocument();
+      expect(within(historyPanel).getByText("success")).toBeInTheDocument();
+      expect(within(historyPanel).getByText("2026-05-08T03:00:03.000Z")).toBeInTheDocument();
+      expect(within(historyPanel).getByText("D:\\Media\\DouyinDownloads")).toBeInTheDocument();
+    });
+
+    it("updates the same batch history row to final status after retry", async () => {
+      mocks.createDownloadJobMock
+        .mockRejectedValueOnce(new Error("submit failed for history"))
+        .mockResolvedValueOnce({
+          jobId: "batch-history-job-1-retry",
+          status: "pending",
+        });
+      mocks.getJobMock.mockResolvedValueOnce({
+          jobId: "batch-history-job-1-retry",
+          status: "success",
+          submittedAt: "2026-05-08T03:11:00Z",
+          startedAt: "2026-05-08T03:11:01Z",
+          finishedAt: "2026-05-08T03:11:03Z",
+          counts: {
+            total: 1,
+            success: 1,
+            failed: 0,
+            skipped: 0,
+          },
+          error: null,
+        });
+
+      render(<App />);
+
+      fireEvent.change(screen.getByLabelText("Download location"), {
+        target: { value: "D:\\Media\\DouyinDownloads" },
+      });
+      fireEvent.click(screen.getByRole("tab", { name: "Batch" }));
+      fireEvent.change(screen.getByLabelText("Batch URLs"), {
+        target: {
+          value: "https://www.douyin.com/video/history-retry",
+        },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Build queue" }));
+      fireEvent.click(screen.getByRole("button", { name: "Start batch" }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Retry failed" })).toBeEnabled();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Retry failed" }));
+
+      await waitFor(
+        () => {
+          expect(screen.getByText("Batch finished: 1 succeeded, 0 failed, 0 skipped.")).toBeInTheDocument();
+        },
+        { timeout: 2500 },
+      );
+
+      const historyPanel = screen.getByRole("region", { name: "History panel" });
+      const matchingRows = within(historyPanel)
+        .getAllByRole("listitem")
+        .filter((item) => item.textContent?.includes("https://www.douyin.com/video/history-retry"));
+      expect(matchingRows).toHaveLength(1);
+      expect(matchingRows[0]).toHaveTextContent("batch-row");
+      expect(matchingRows[0]).toHaveTextContent("success");
+      expect(matchingRows[0]).not.toHaveTextContent("failed");
+    });
+
+    it("loads persisted history after app restart", async () => {
+      mocks.createDownloadJobMock.mockResolvedValueOnce({
+        jobId: "job-history-restart",
+        status: "pending",
+      });
+      mocks.getJobMock.mockResolvedValueOnce({
+        jobId: "job-history-restart",
+        status: "success",
+        submittedAt: "2026-05-08T03:20:00Z",
+        startedAt: "2026-05-08T03:20:01Z",
+        finishedAt: "2026-05-08T03:20:03Z",
+        counts: {
+          total: 1,
+          success: 1,
+          failed: 0,
+          skipped: 0,
+        },
+        error: null,
+      });
+
+      const firstRender = render(<App />);
+
+      fireEvent.change(screen.getByLabelText("Download location"), {
+        target: { value: "D:\\Media\\DouyinDownloads" },
+      });
+      fireEvent.change(screen.getByLabelText("Douyin URL"), {
+        target: { value: "https://www.douyin.com/video/history-restart" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Download finished successfully.")).toBeInTheDocument();
+      });
+      expect(screen.getByText("https://www.douyin.com/video/history-restart")).toBeInTheDocument();
+
+      firstRender.unmount();
+
+      render(<App />);
+      const historyPanel = screen.getByRole("region", { name: "History panel" });
+      await waitFor(() => {
+        expect(within(historyPanel).getByText("https://www.douyin.com/video/history-restart")).toBeInTheDocument();
+      });
+      expect(within(historyPanel).getByText("success")).toBeInTheDocument();
+    });
+
+    it("shows friendly missing-job message for polling 404 errors and keeps diagnostics separate", async () => {
     mocks.createDownloadJobMock.mockResolvedValueOnce({
       jobId: "job-404",
       status: "pending",

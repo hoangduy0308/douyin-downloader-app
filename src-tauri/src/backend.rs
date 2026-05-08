@@ -153,6 +153,8 @@ pub fn backend_start(
     let python_executable = request.python_executable.unwrap_or_else(|| "python".to_owned());
     let mut command = Command::new(&python_executable);
     command
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
         .arg("run.py")
         .arg("--serve")
         .arg("--serve-host")
@@ -171,7 +173,7 @@ pub fn backend_start(
         "info",
         "lifecycle",
         format!(
-            "Spawning managed backend command: {} run.py --serve --serve-host {} --serve-port {} --config <managed> --path <absolute-output>",
+            "Spawning managed backend command: {} run.py --serve --serve-host {} --serve-port {} --config <managed> --path <absolute-output> (PYTHONUTF8=1, PYTHONIOENCODING=utf-8)",
             python_executable, request.host, request.port
         ),
     );

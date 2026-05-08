@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { BackendDiagnostic, BackendRuntime, BackendRuntimeStartRequest } from "./backendLifecycle";
 
 interface BackendStartPayload {
@@ -19,14 +19,8 @@ interface OpenOutputFolderPayload {
   };
 }
 
-declare global {
-  interface Window {
-    __TAURI__?: unknown;
-  }
-}
-
 export function isTauriRuntimeAvailable(): boolean {
-  return typeof window !== "undefined" && typeof window.__TAURI__ !== "undefined";
+  return isTauri();
 }
 
 export class TauriBackendRuntime implements BackendRuntime {

@@ -1,37 +1,29 @@
 {
-    "schema_version":  "1.1",
-    "feature_slug":  "windows-desktop-downloader-ui",
-    "mode":  "standard",
-    "active_skill":  "reviewing",
-    "phase":  "review-phase4-awaiting-closeout-decision",
-    "phase_number":  4,
-    "epic_id":  "douyin-downloader-app-irx",
-    "approved_gates":  {
-                           "context":  false,
-                           "phase_plan":  true,
-                           "execution":  true,
-                           "review":  false
-                       },
-    "active_beads":  [
-
-                     ],
-    "active_workers":  [
-
-                       ],
-    "blockers":  [
-
-                 ],
-    "focus":  "douyin-downloader-app-irx",
-    "summary":  "Review Phase 4 checks are green: epic children closed, prior P1 closed, npm test passed, and npm run build passed.",
-    "next_action":  "Choose closeout path: create PR, merge directly, keep branch for further work, or discard branch.",
-    "deferred_beads":  [
-
-                       ],
-    "last_compounding_run":  {
-                                 "feature":  "",
-                                 "date":  "",
-                                 "learnings_file":  "",
-                                 "critical_promotions":  0
-                             },
-    "last_updated":  "2026-05-08T22:18:42+07:00"
+  "schema_version": "1.1",
+  "feature_slug": "",
+  "mode": "idle",
+  "active_skill": "compounding",
+  "phase": "compounding-complete",
+  "phase_number": 0,
+  "epic_id": "",
+  "approved_gates": {
+    "context": false,
+    "phase_plan": false,
+    "execution": false,
+    "review": false
+  },
+  "active_beads": [],
+  "active_workers": [],
+  "blockers": [],
+  "focus": "next-feature",
+  "summary": "Compounding complete. Learnings captured for the next feature.",
+  "next_action": "Start the next feature or reopen deferred follow-up work.",
+  "deferred_beads": [],
+  "last_compounding_run": {
+    "feature": "windows-desktop-downloader-ui",
+    "date": "2026-05-08",
+    "learnings_file": "history/learnings/20260508-desktop-queue-proof.md",
+    "critical_promotions": 3
+  },
+  "last_updated": "2026-05-08T23:59:27+07:00"
 }

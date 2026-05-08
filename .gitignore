@@ -1,2 +1,10 @@
 # bv (beads viewer) local config and caches
 .bv/
+node_modules/
+dist/
+.cookies.json
+.runtime/
+tauri-dev.out.log
+tauri-dev.err.log
+src-tauri/target/
+.khuym/reservations.json

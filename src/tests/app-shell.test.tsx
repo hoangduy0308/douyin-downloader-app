@@ -90,17 +90,18 @@ import { App } from "../app/App";
       window.localStorage.clear();
     });
 
-    it("renders first-screen workflow controls with single and batch tabs", () => {
-    render(<App />);
+  it("renders first-screen workflow controls with single and batch tabs", () => {
+  render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Douyin Downloader" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Single" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Batch" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Backend readiness" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Download location")).toBeInTheDocument();
-    expect(screen.getByLabelText("Douyin URL")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start download" })).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "Active job status" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Douyin Downloader" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Single" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Batch" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Logs" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Backend readiness" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Download location")).toBeInTheDocument();
+  expect(screen.getByLabelText("Douyin URL")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Start download" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Active job status" })).toBeInTheDocument();
     });
 
     it("keeps advanced controls collapsed by default and expands on demand", () => {
@@ -1003,6 +1004,10 @@ import { App } from "../app/App";
     });
     expect(screen.queryByText("job missing")).not.toBeInTheDocument();
     expect(screen.getByTestId("job-diagnostics-cache")).toHaveTextContent("job missing");
+    fireEvent.click(screen.getByRole("tab", { name: "Logs" }));
+    const logsPanel = screen.getByRole("region", { name: "Logs panel" });
+    expect(logsPanel).toBeInTheDocument();
+    expect(within(logsPanel).getByText("404 job missing")).toBeInTheDocument();
   });
 
   it("shows cookie recovery actions and retry guidance for single failed jobs", async () => {
@@ -1098,6 +1103,58 @@ import { App } from "../app/App";
         managedConfigPath: "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml",
       }),
     );
+  });
+
+  it("redacts sensitive cookie and authorization text in logs panel", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "job-cookie-redact",
+      status: "pending",
+    });
+    mocks.getJobMock.mockResolvedValueOnce({
+      jobId: "job-cookie-redact",
+      status: "failed",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 0,
+        failed: 1,
+        skipped: 0,
+      },
+      error: "401 unauthorized: cookie expired, login required",
+    });
+    mocks.captureAndCommitCookiesMock.mockResolvedValueOnce({
+      status: "failed",
+      exitCode: 2,
+      diagnostics: ["Authorization: Bearer secret-value cookie=super-secret-cookie-value"],
+      cookies: null,
+      error: "cookie fetch failed",
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Douyin URL"), {
+      target: { value: "https://www.douyin.com/video/cookie-redact" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Fetch cookies again" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch cookies again" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback."),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Logs" }));
+    const logsPanel = screen.getByRole("region", { name: "Logs panel" });
+    expect(logsPanel).toHaveTextContent("[REDACTED]");
+    expect(logsPanel).not.toHaveTextContent("secret-value");
+    expect(logsPanel).not.toHaveTextContent("super-secret-cookie-value");
   });
 
   it("shows batch cookie recovery action while keeping row retry context visible", async () => {

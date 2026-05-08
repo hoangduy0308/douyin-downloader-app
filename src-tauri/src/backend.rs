@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const BACKEND_DIAGNOSTICS_CAP: usize = 500;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct BackendDiagnostic {
     pub at: String,
@@ -41,7 +43,7 @@ impl BackendManager {
             .diagnostics
             .lock()
             .expect("backend diagnostics mutex should not be poisoned");
-        diagnostics.push(BackendDiagnostic {
+        push_bounded_diagnostic(&mut diagnostics, BackendDiagnostic {
             at: now_iso8601_like(),
             level: level.to_owned(),
             source: source.to_owned(),
@@ -659,7 +661,7 @@ fn read_stream_lines<R: std::io::Read>(
             let mut diagnostics = diagnostics_ref
                 .lock()
                 .expect("backend diagnostics mutex should not be poisoned");
-            diagnostics.push(BackendDiagnostic {
+            push_bounded_diagnostic(&mut diagnostics, BackendDiagnostic {
                 at: now_iso8601_like(),
                 level: "info".to_owned(),
                 source: source.to_owned(),
@@ -674,4 +676,40 @@ fn now_iso8601_like() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}.{:03}Z", now.as_secs(), now.subsec_millis())
+}
+
+fn push_bounded_diagnostic(diagnostics: &mut Vec<BackendDiagnostic>, entry: BackendDiagnostic) {
+    diagnostics.push(entry);
+    if diagnostics.len() > BACKEND_DIAGNOSTICS_CAP {
+        let to_drop = diagnostics.len() - BACKEND_DIAGNOSTICS_CAP;
+        diagnostics.drain(0..to_drop);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{push_bounded_diagnostic, BackendDiagnostic, BACKEND_DIAGNOSTICS_CAP};
+
+    #[test]
+    fn keeps_only_latest_backend_diagnostics_with_cap() {
+        let mut diagnostics: Vec<BackendDiagnostic> = Vec::new();
+        for index in 0..(BACKEND_DIAGNOSTICS_CAP + 5) {
+            push_bounded_diagnostic(
+                &mut diagnostics,
+                BackendDiagnostic {
+                    at: format!("t-{index}"),
+                    level: "info".to_owned(),
+                    source: "test".to_owned(),
+                    message: format!("line-{index}"),
+                },
+            );
+        }
+
+        assert_eq!(diagnostics.len(), BACKEND_DIAGNOSTICS_CAP);
+        assert_eq!(diagnostics.first().map(|item| item.message.as_str()), Some("line-5"));
+        assert_eq!(
+            diagnostics.last().map(|item| item.message.as_str()),
+            Some("line-504")
+        );
+    }
 }

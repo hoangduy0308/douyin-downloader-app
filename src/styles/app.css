@@ -284,10 +284,6 @@ button:disabled {
   margin-top: 4px;
 }
 
-.diagnostics-card {
-  grid-column: span 2;
-}
-
 .history-card {
   grid-column: span 2;
 }
@@ -369,25 +365,49 @@ button:disabled {
   width: 100%;
 }
 
-.diagnostics-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.diagnostics-count {
+.logs-count {
   color: #4f657a;
   font-size: 0.9rem;
 }
 
-.diagnostics-list {
+.logs-list {
   margin: 12px 0 0;
-  padding-left: 18px;
+  padding-left: 20px;
 }
 
-.diagnostics-list li {
-  margin-bottom: 6px;
+.logs-list li {
+  margin-bottom: 10px;
   color: #2f4459;
+}
+
+.logs-meta,
+.logs-message,
+.logs-context {
+  margin: 0;
+}
+
+.logs-context {
+  margin-top: 4px;
+  color: #4f657a;
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.logs-message {
+  margin-top: 3px;
+}
+
+.logs-panel {
+  border: 1px solid #d1dce6;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 12px;
+}
+
+.logs-meta {
+  margin-bottom: 6px;
+  color: #2a4158;
+  font-size: 0.85rem;
 }
 
 @media (max-width: 900px) {
@@ -405,10 +425,6 @@ button:disabled {
 
   .batch-totals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .diagnostics-card {
-    grid-column: span 1;
   }
 
   .history-card {

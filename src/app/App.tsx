@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackendStatusCard } from "../components/BackendStatusCard";
 import { BatchDownloadPanel } from "../components/BatchDownloadPanel";
-import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { HistoryPanel } from "../components/HistoryPanel";
 import { JobStatusPanel } from "../components/JobStatusPanel";
+import { LogsPanel } from "../components/LogsPanel";
 import { OutputFolderControl } from "../components/OutputFolderControl";
 import { SingleDownloadPanel } from "../components/SingleDownloadPanel";
 import { AdvancedOptionsPanel } from "../components/AdvancedOptionsPanel";
@@ -39,6 +39,7 @@ import {
   type RuntimeAdvancedOptions,
   type RuntimeConfigWriter,
 } from "../services/settingsStore";
+import { AppLogStore, FRONTEND_LOG_CAP } from "../services/logStore";
 import {
   ensureRuntimeDirectory,
   isTauriRuntimeAvailable,
@@ -47,7 +48,7 @@ import {
   writeManagedConfigAtomic,
 } from "../services/tauriBackendRuntime";
 
-type Mode = "single" | "batch";
+type Mode = "single" | "batch" | "logs";
 const EMPTY_BATCH_TOTALS: BatchQueueTotals = {
   total: 0,
   waiting: 0,
@@ -132,7 +133,7 @@ export function App(): JSX.Element {
   const [backendDetail, setBackendDetail] = useState(
     "Waiting for backend readiness check.",
   );
-  const [backendDiagnostics, setBackendDiagnostics] = useState<string[]>([]);
+  const [logEvents, setLogEvents] = useState<ReturnType<AppLogStore["getEventsNewestFirst"]>>([]);
   const [submitMessage, setSubmitMessage] = useState<string>("");
   const [submitMessageTone, setSubmitMessageTone] = useState<"error" | "hint">("hint");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -141,7 +142,6 @@ export function App(): JSX.Element {
   const [activeJobUrl, setActiveJobUrl] = useState<string | null>(null);
   const [jobPanelMessage, setJobPanelMessage] = useState<string>("");
   const [jobPanelTone, setJobPanelTone] = useState<"error" | "hint">("hint");
-  const [jobDiagnostics, setJobDiagnostics] = useState<string[]>([]);
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [singleCookieRecoveryInProgress, setSingleCookieRecoveryInProgress] = useState(false);
   const [batchCookieRecoveryInProgress, setBatchCookieRecoveryInProgress] = useState(false);
@@ -155,9 +155,27 @@ export function App(): JSX.Element {
   const [batchMessage, setBatchMessage] = useState("Paste multiline URLs or import a text file, then build the queue.");
   const [batchMessageTone, setBatchMessageTone] = useState<"error" | "hint">("hint");
   const [batchRunId, setBatchRunId] = useState("batch-run-0");
+  const logStoreRef = useRef(new AppLogStore(FRONTEND_LOG_CAP));
   const outputPathManuallyEdited = useRef(false);
   const batchRunCounter = useRef(0);
   const recordedBatchHistoryRef = useRef<Record<string, string>>({});
+  const appendLog = useCallback(
+    (
+      level: "info" | "warn" | "error",
+      source: string,
+      message: string,
+      context?: Record<string, string | number | boolean | null | undefined>,
+    ): void => {
+      const next = logStoreRef.current.append({
+        level,
+        source,
+        message,
+        context,
+      });
+      setLogEvents(next);
+    },
+    [],
+  );
   const settingsStore = useMemo(() => {
     return new RuntimeSettingsStore(createRuntimeSettingsWriter());
   }, []);
@@ -180,12 +198,12 @@ export function App(): JSX.Element {
     return new AppHistoryStore({
       fileStore: createHistoryFileStore(),
       onDiagnostic: (event: HistoryDiagnosticEvent) => {
-        setJobDiagnostics((existing) =>
-          existing.concat(`history ${event.action}: ${event.message}`),
-        );
+        appendLog("error", "history", `history ${event.action}: ${event.message}`, {
+          action: event.action,
+        });
       },
     });
-  }, []);
+  }, [appendLog]);
 
   const upsertHistoryEntry = useCallback(
     async (input: HistoryEntryUpsertInput): Promise<void> => {
@@ -199,7 +217,10 @@ export function App(): JSX.Element {
     if (mode === "single") {
       return "Single link download mode is active.";
     }
-    return "Batch queue mode validates URLs and prepares rows before execution.";
+    if (mode === "batch") {
+      return "Batch queue mode validates URLs and prepares rows before execution.";
+    }
+    return "Technical diagnostics with bounded retention and redaction.";
   }, [mode]);
 
   useEffect(() => {
@@ -220,11 +241,12 @@ export function App(): JSX.Element {
       const detail = error instanceof Error ? error.message : String(error);
       setBackendStatus("error");
       setBackendDetail(`Settings initialization failed: ${detail}`);
+      appendLog("error", "settings", detail, { action: "initialize" });
     });
     return () => {
       mounted = false;
     };
-  }, [settingsStore]);
+  }, [appendLog, settingsStore]);
 
   useEffect(() => {
     if (!isTauriRuntimeAvailable()) {
@@ -261,7 +283,16 @@ export function App(): JSX.Element {
         }
           setBackendStatus(ready.state);
           setBackendDetail(ready.detail);
-          setBackendDiagnostics(lifecycle.getDiagnostics().map((entry) => entry.message));
+          const lifecycleDiagnostics = lifecycle.getDiagnostics();
+          const next = logStoreRef.current.appendMany(
+            lifecycleDiagnostics.map((entry) => ({
+              at: entry.at,
+              level: entry.level === "error" ? "error" : "info",
+              source: `backend.${entry.source}`,
+              message: entry.message,
+            })),
+          );
+          setLogEvents(next);
           if (ready.state === "ready") {
             setBackendReadyConfigVersion(configVersion);
           }
@@ -334,7 +365,12 @@ export function App(): JSX.Element {
           }
             setJobPanelMessage(mapped.message);
             setJobPanelTone("error");
-            setJobDiagnostics((existing) => existing.concat(mapped.diagnostics));
+            const diagnostics = Array.isArray(mapped.diagnostics) ? mapped.diagnostics : [mapped.diagnostics];
+            for (const diagnostic of diagnostics) {
+              appendLog("error", "job.failed", diagnostic, {
+                jobId: job.jobId,
+              });
+            }
             const targetUrl = activeJobUrl;
             if (targetUrl !== null) {
               const finishedAt = job.finishedAt ?? new Date().toISOString();
@@ -359,7 +395,12 @@ export function App(): JSX.Element {
         const mapped = mapPollingRequestError(error);
         setJobPanelMessage(mapped.message);
         setJobPanelTone("error");
-        setJobDiagnostics((existing) => existing.concat(mapped.diagnostics));
+        const diagnostics = Array.isArray(mapped.diagnostics) ? mapped.diagnostics : [mapped.diagnostics];
+        for (const diagnostic of diagnostics) {
+          appendLog("error", "job.polling", diagnostic, {
+            jobId: activeJobId,
+          });
+        }
       },
     });
 
@@ -367,7 +408,7 @@ export function App(): JSX.Element {
     return () => {
       poller.stop();
     };
-    }, [activeJobId, activeJobUrl, backendClient, outputPath, upsertHistoryEntry]);
+    }, [activeJobId, activeJobUrl, appendLog, backendClient, outputPath, upsertHistoryEntry]);
 
   useEffect(() => {
     return () => {
@@ -387,6 +428,20 @@ export function App(): JSX.Element {
         continue;
       }
       recordedBatchHistoryRef.current[logicalId] = fingerprint;
+      if (row.status === "failed" && row.lastError) {
+        appendLog("error", "batch.row", row.lastError, {
+          rowId: row.id,
+          runId: batchRunId,
+          jobId: row.lastJobId ?? "",
+          attempt: row.attempt,
+        });
+      }
+      if (row.status === "skipped" && row.skipReason) {
+        appendLog("warn", "batch.validation", row.skipReason, {
+          rowId: row.id,
+          runId: batchRunId,
+        });
+      }
 
       const now = new Date().toISOString();
       const status = row.status === "success" ? "success" : row.status === "failed" ? "failed" : "skipped";
@@ -409,7 +464,7 @@ export function App(): JSX.Element {
         recordedAt: now,
       });
     }
-  }, [batchRows, batchRunId, outputPath, upsertHistoryEntry]);
+  }, [appendLog, batchRows, batchRunId, outputPath, upsertHistoryEntry]);
 
   const backendReadyForSubmit = backendStatus === "ready";
   const configReadyForSubmit = configVersion === backendReadyConfigVersion;
@@ -477,11 +532,21 @@ export function App(): JSX.Element {
       return mapFailedJobError(row.lastError)?.kind === "cookie-auth";
     });
   }, [batchRows]);
+  const backendDiagnostics = useMemo(() => {
+    return logEvents
+      .filter((event) => event.source.startsWith("backend."))
+      .map((event) => event.message);
+  }, [logEvents]);
+  const jobDiagnostics = useMemo(() => {
+    return logEvents
+      .filter((event) => event.source.startsWith("job.") || event.source.startsWith("cookie.") || event.source === "filesystem.output" || event.source === "history")
+      .map((event) => event.message);
+  }, [logEvents]);
   const batchFailureDiagnostics = useMemo(() => {
-    return batchRows
-      .filter((row) => row.lastError)
-      .map((row) => `${row.id}: ${row.lastError}`);
-  }, [batchRows]);
+    return logEvents
+      .filter((event) => event.source === "batch.row")
+      .map((event) => event.message);
+  }, [logEvents]);
 
   const buildCookieRecoveryRequest = () => {
     return {
@@ -497,7 +562,9 @@ export function App(): JSX.Element {
     if (result.diagnostics.length === 0) {
       return;
     }
-    setJobDiagnostics((existing) => existing.concat(result.diagnostics));
+    for (const diagnostic of result.diagnostics) {
+      appendLog("info", "cookie.recovery", diagnostic);
+    }
   };
 
   const openConfiguredOutputFolder = async (): Promise<{
@@ -530,7 +597,7 @@ export function App(): JSX.Element {
         };
       }
       return {
-        message: "Could not open the selected output folder. Check diagnostics for details.",
+        message: "Could not open the selected output folder. Check Logs for details.",
         tone: "error",
         diagnostic: detail,
       };
@@ -545,7 +612,9 @@ export function App(): JSX.Element {
       setJobPanelTone(result.tone);
       const diagnostic = result.diagnostic;
       if (diagnostic !== null) {
-        setJobDiagnostics((existing) => existing.concat(diagnostic));
+        appendLog("error", "filesystem.output", diagnostic, {
+          action: "open-from-job-panel",
+        });
       }
     } finally {
       setOpeningOutputFolder(false);
@@ -560,7 +629,9 @@ export function App(): JSX.Element {
       setBatchMessageTone(result.tone);
       const diagnostic = result.diagnostic;
       if (diagnostic !== null) {
-        setJobDiagnostics((existing) => existing.concat(diagnostic));
+        appendLog("error", "filesystem.output", diagnostic, {
+          action: "open-from-batch-panel",
+        });
       }
     } finally {
       setOpeningOutputFolder(false);
@@ -588,7 +659,9 @@ export function App(): JSX.Element {
       const detail = error instanceof Error ? error.message : String(error);
       setJobPanelMessage("Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback.");
       setJobPanelTone("error");
-      setJobDiagnostics((existing) => existing.concat(detail));
+      appendLog("error", "cookie.recovery", detail, {
+        mode: "single",
+      });
     } finally {
       setSingleCookieRecoveryInProgress(false);
     }
@@ -608,7 +681,9 @@ export function App(): JSX.Element {
       const detail = error instanceof Error ? error.message : String(error);
       setBatchMessage("Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback.");
       setBatchMessageTone("error");
-      setJobDiagnostics((existing) => existing.concat(detail));
+      appendLog("error", "cookie.recovery", detail, {
+        mode: "batch",
+      });
     } finally {
       setBatchCookieRecoveryInProgress(false);
     }
@@ -643,7 +718,6 @@ export function App(): JSX.Element {
       setActiveJobUrl(trimmedUrl);
       setActiveJobState(null);
       setJobPanelMessage("");
-      setJobDiagnostics([]);
       setSubmitMessage(`Download queued as ${response.jobId}.`);
       setSubmitMessageTone("hint");
     } catch {
@@ -672,6 +746,9 @@ export function App(): JSX.Element {
         .catch(() => {
           setSubmitMessage("Output path must be a Windows absolute path.");
           setSubmitMessageTone("error");
+          appendLog("error", "settings", "Output path must be a Windows absolute path.", {
+            action: "update-output-path",
+          });
         });
     };
 
@@ -767,6 +844,7 @@ export function App(): JSX.Element {
       const detail = error instanceof Error ? error.message : String(error);
       setBatchMessage(`Could not import URLs: ${detail}`);
       setBatchMessageTone("error");
+      appendLog("error", "batch.import", detail);
     }
   };
 
@@ -782,6 +860,9 @@ export function App(): JSX.Element {
       .catch(() => {
         setSubmitMessage("Could not apply advanced controls. Check values and try again.");
         setSubmitMessageTone("error");
+        appendLog("error", "settings", "Could not apply advanced controls.", {
+          action: "update-advanced-options",
+        });
       });
   };
 
@@ -816,6 +897,15 @@ export function App(): JSX.Element {
             >
               Batch
             </button>
+            <button
+              role="tab"
+              aria-selected={mode === "logs"}
+              className={mode === "logs" ? "tab active" : "tab"}
+              onClick={() => setMode("logs")}
+              type="button"
+            >
+              Logs
+            </button>
           </div>
           <p className="mode-description">{modeDescription}</p>
           {mode === "single" ? (
@@ -828,7 +918,7 @@ export function App(): JSX.Element {
               message={submitMessage || submitStatusMessage}
               messageTone={submitMessage ? submitMessageTone : "hint"}
             />
-          ) : (
+          ) : mode === "batch" ? (
                 <BatchDownloadPanel
                   inputText={batchInputText}
                   onInputTextChange={setBatchInputText}
@@ -868,6 +958,8 @@ export function App(): JSX.Element {
                     void handleOpenOutputFolderFromBatch();
                   }}
                 />
+              ) : (
+                <LogsPanel events={logEvents} cap={FRONTEND_LOG_CAP} />
               )}
             </section>
 
@@ -899,7 +991,6 @@ export function App(): JSX.Element {
           }}
           />
           <HistoryPanel entries={historyEntries} />
-          <DiagnosticsPanel backendDiagnostics={backendDiagnostics} jobDiagnostics={jobDiagnostics} />
         </section>
       <div data-testid="backend-diagnostics-cache" hidden>
         {backendDiagnostics.join(" | ")}

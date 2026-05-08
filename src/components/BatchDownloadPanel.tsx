@@ -10,6 +10,7 @@ interface BatchDownloadPanelProps {
   onPauseQueue: () => void;
   onResumeQueue: () => void;
   onRetryQueue: () => void;
+  onRetryRow: (rowId: string) => void;
   onImportText: () => void;
   queueStatusLabel: string;
   activeRowUrl: string | null;
@@ -38,6 +39,7 @@ export function BatchDownloadPanel({
   onPauseQueue,
   onResumeQueue,
   onRetryQueue,
+  onRetryRow,
   onImportText,
   queueStatusLabel,
   activeRowUrl,
@@ -104,7 +106,7 @@ export function BatchDownloadPanel({
               {openOutputDisabledReason ? <p className="hint">{openOutputDisabledReason}</p> : null}
             </section>
           ) : null}
-          <QueueTable rows={rows} />
-        </section>
-    );
-}
+            <QueueTable rows={rows} onRetryRow={onRetryRow} />
+          </section>
+      );
+  }

@@ -90,6 +90,39 @@ describe("batchQueueRunner", () => {
     expect(snapshot.totals.skipped).toBe(1);
   });
 
+  it("never submits ftp/file scheme rows from parsed batch input", async () => {
+    const parseResult = parseBatchQueueInput(
+      [
+        "ftp://www.douyin.com/video/100",
+        "file://www.douyin.com/video/200",
+        "https://www.douyin.com/video/300",
+      ].join("\n"),
+    );
+    const createDownloadJob = vi
+      .fn<BackendClient["createDownloadJob"]>()
+      .mockResolvedValueOnce({ jobId: "job-https", status: "pending" });
+    const getJob = vi.fn<BackendClient["getJob"]>().mockResolvedValue(
+      buildJob({ jobId: "job-https", status: "pending" }),
+    );
+    const runner = createBatchQueueRunner({
+      backendClient: {
+        createDownloadJob,
+        getJob,
+      } satisfies Pick<BackendClient, "createDownloadJob" | "getJob">,
+      concurrencyLimit: 1,
+    });
+
+    runner.start(parseResult.rows);
+    await vi.runAllTicks();
+
+    const snapshot = runner.getSnapshot();
+    expect(createDownloadJob).toHaveBeenCalledTimes(1);
+    expect(createDownloadJob).toHaveBeenNthCalledWith(1, { url: "https://www.douyin.com/video/300" });
+    expect(snapshot.rows[0]).toEqual(expect.objectContaining({ status: "skipped", skipReason: "unsupported_host" }));
+    expect(snapshot.rows[1]).toEqual(expect.objectContaining({ status: "skipped", skipReason: "unsupported_host" }));
+    expect(snapshot.rows[2]).toEqual(expect.objectContaining({ status: "running", lastJobId: "job-https" }));
+  });
+
   it("polls submitted jobs to success and failed terminal states with aggregate totals", async () => {
     const parseResult = parseBatchQueueInput(
       ["https://www.douyin.com/video/100", "https://www.douyin.com/video/200"].join("\n"),
@@ -243,6 +276,97 @@ describe("batchQueueRunner", () => {
     expect(snapshot.rows[0]).toEqual(expect.objectContaining({ lastJobId: "job-1", attempt: 1 }));
   });
 
+  it("ignores stale submit completion from queue A after queue B rebuild/start", async () => {
+    const queueA = parseBatchQueueInput("https://www.douyin.com/video/100");
+    const queueB = parseBatchQueueInput("https://www.douyin.com/video/200");
+    const queueADeferred = createDeferred<{ jobId: string; status: "pending" }>();
+    const createDownloadJob = vi
+      .fn<BackendClient["createDownloadJob"]>()
+      .mockReturnValueOnce(queueADeferred.promise)
+      .mockResolvedValueOnce({ jobId: "job-b", status: "pending" });
+    const getJob = vi.fn<BackendClient["getJob"]>().mockResolvedValue(
+      buildJob({ jobId: "job-b", status: "pending" }),
+    );
+    const runner = createBatchQueueRunner({
+      backendClient: {
+        createDownloadJob,
+        getJob,
+      } satisfies Pick<BackendClient, "createDownloadJob" | "getJob">,
+      concurrencyLimit: 1,
+    });
+
+    runner.start(queueA.rows);
+    await vi.runAllTicks();
+    runner.start(queueB.rows);
+    await vi.runAllTicks();
+
+    queueADeferred.resolve({ jobId: "job-a", status: "pending" });
+    await vi.runAllTicks();
+
+    const snapshot = runner.getSnapshot();
+    expect(createDownloadJob).toHaveBeenCalledTimes(2);
+    expect(createDownloadJob).toHaveBeenNthCalledWith(1, { url: "https://www.douyin.com/video/100" });
+    expect(createDownloadJob).toHaveBeenNthCalledWith(2, { url: "https://www.douyin.com/video/200" });
+    expect(snapshot.rows[0]).toEqual(
+      expect.objectContaining({
+        sourceText: "https://www.douyin.com/video/200",
+        currentJobId: "job-b",
+        lastJobId: "job-b",
+        status: "running",
+        lastError: null,
+      }),
+    );
+  });
+
+  it("ignores stale poll completion from queue A after queue stop and queue B restart", async () => {
+    const queueA = parseBatchQueueInput("https://www.douyin.com/video/100");
+    const queueB = parseBatchQueueInput("https://www.douyin.com/video/200");
+    const pollADeferred = createDeferred<JobState>();
+    const createDownloadJob = vi
+      .fn<BackendClient["createDownloadJob"]>()
+      .mockResolvedValueOnce({ jobId: "job-shared", status: "pending" })
+      .mockResolvedValueOnce({ jobId: "job-shared", status: "pending" });
+    const getJob = vi
+      .fn<BackendClient["getJob"]>()
+      .mockReturnValueOnce(pollADeferred.promise)
+      .mockResolvedValue(buildJob({ jobId: "job-shared", status: "pending" }));
+    const runner = createBatchQueueRunner({
+      backendClient: {
+        createDownloadJob,
+        getJob,
+      } satisfies Pick<BackendClient, "createDownloadJob" | "getJob">,
+      concurrencyLimit: 1,
+    });
+
+    runner.start(queueA.rows);
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    runner.stop();
+    runner.start(queueB.rows);
+    await vi.runAllTicks();
+
+    pollADeferred.resolve(
+      buildJob({
+        jobId: "job-shared",
+        status: "failed",
+        error: "stale queue A failure",
+        finishedAt: "2026-05-08T00:20:00Z",
+      }),
+    );
+    await vi.runAllTicks();
+
+    const snapshot = runner.getSnapshot();
+    expect(snapshot.rows[0]).toEqual(
+      expect.objectContaining({
+        sourceText: "https://www.douyin.com/video/200",
+        status: "running",
+        currentJobId: "job-shared",
+        lastError: null,
+      }),
+    );
+  });
+
   it("pauses new scheduling while active jobs continue polling to terminal state", async () => {
     const parseResult = parseBatchQueueInput(
       [
@@ -372,4 +496,5 @@ describe("batchQueueRunner", () => {
     expect(finalSnapshot.totals.failed).toBe(0);
     expect(finalSnapshot.totals.retryEligible).toBe(0);
   });
+
 });

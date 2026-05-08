@@ -409,6 +409,23 @@ export function App(): JSX.Element {
     setBatchMessageTone("hint");
   };
 
+  const handleRetryBatchRow = (rowId: string): void => {
+    const didRetry = batchQueueRunner.retryRow(rowId);
+    if (!didRetry) {
+      setBatchMessage("This row is not retry-eligible right now.");
+      setBatchMessageTone("error");
+      return;
+    }
+
+    setBatchStarted(true);
+    if (batchSchedulingEnabled) {
+      setBatchMessage(`Retrying ${rowId}.`);
+    } else {
+      setBatchMessage(`Prepared retry for ${rowId}. Resume queue to continue.`);
+    }
+    setBatchMessageTone("hint");
+  };
+
   const handleImportBatchText = async (): Promise<void> => {
     try {
       const importedText = await readImportedBatchText();
@@ -470,12 +487,13 @@ export function App(): JSX.Element {
                   onInputTextChange={setBatchInputText}
                   onBuildQueue={() => handleBuildBatchQueue(batchInputText)}
                   onStartQueue={handleStartBatchQueue}
-                onPauseQueue={handlePauseBatchQueue}
-                onResumeQueue={handleResumeBatchQueue}
-                onRetryQueue={handleRetryBatchQueue}
-                onImportText={() => {
-                  void handleImportBatchText();
-                  }}
+                  onPauseQueue={handlePauseBatchQueue}
+                  onResumeQueue={handleResumeBatchQueue}
+                  onRetryQueue={handleRetryBatchQueue}
+                  onRetryRow={handleRetryBatchRow}
+                  onImportText={() => {
+                    void handleImportBatchText();
+                    }}
                   totals={batchTotals}
                   completionSummary={batchCompletionSummary}
                   rows={batchRows}

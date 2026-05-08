@@ -325,6 +325,105 @@ describe("App shell", () => {
     });
   });
 
+  it("retries only the selected failed row from row action and does not resubmit unrelated failed rows", async () => {
+    mocks.createDownloadJobMock
+      .mockResolvedValueOnce({
+        jobId: "batch-job-a",
+        status: "pending",
+      })
+      .mockResolvedValueOnce({
+        jobId: "batch-job-b",
+        status: "pending",
+      })
+      .mockResolvedValueOnce({
+        jobId: "batch-job-a-retry",
+        status: "pending",
+      });
+    mocks.getJobMock.mockImplementation(async (jobId: string) => {
+      if (jobId === "batch-job-a") {
+        return {
+          jobId,
+          status: "failed",
+          submittedAt: "2026-05-08T03:00:00Z",
+          startedAt: "2026-05-08T03:00:01Z",
+          finishedAt: "2026-05-08T03:00:03Z",
+          counts: {
+            total: 1,
+            success: 0,
+            failed: 1,
+            skipped: 0,
+          },
+          error: "RuntimeError: first row failed",
+        };
+      }
+      if (jobId === "batch-job-b") {
+        return {
+          jobId,
+          status: "failed",
+          submittedAt: "2026-05-08T03:00:00Z",
+          startedAt: "2026-05-08T03:00:01Z",
+          finishedAt: "2026-05-08T03:00:03Z",
+          counts: {
+            total: 1,
+            success: 0,
+            failed: 1,
+            skipped: 0,
+          },
+          error: "RuntimeError: second row failed",
+        };
+      }
+      return {
+        jobId,
+        status: "success",
+        submittedAt: "2026-05-08T03:00:00Z",
+        startedAt: "2026-05-08T03:00:01Z",
+        finishedAt: "2026-05-08T03:00:03Z",
+        counts: {
+          total: 1,
+          success: 1,
+          failed: 0,
+          skipped: 0,
+        },
+        error: null,
+      };
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Batch" }));
+    fireEvent.change(screen.getByLabelText("Batch URLs"), {
+      target: {
+        value: [
+          "https://www.douyin.com/video/retry-only-row-1",
+          "https://www.douyin.com/video/keep-row-2-failed",
+        ].join("\n"),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Build queue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start batch" }));
+
+    await waitFor(() => {
+      expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(2);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Retry failed" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Retry row 1" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry row 1" }));
+
+    await waitFor(() => {
+      expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(3);
+    });
+    expect(mocks.createDownloadJobMock).toHaveBeenLastCalledWith({
+      url: "https://www.douyin.com/video/retry-only-row-1",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Batch finished: 1 succeeded, 1 failed, 0 skipped.")).toBeInTheDocument();
+    });
+  });
+
   it("shows terminal batch summary from row states after retry and reuses open-folder action", async () => {
     mocks.createDownloadJobMock
       .mockResolvedValueOnce({

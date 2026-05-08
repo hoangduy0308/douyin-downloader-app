@@ -28,6 +28,7 @@ export interface BatchQueueRunner {
   pause: () => void;
   resume: () => void;
   retryEligibleRows: () => number;
+  retryRow: (rowId: string) => boolean;
   setSchedulingEnabled: (enabled: boolean) => void;
   getSnapshot: () => BatchQueueRunnerSnapshot;
 }
@@ -40,6 +41,7 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
 
   let rows: BatchQueueRow[] = [];
   let active = false;
+  let runGeneration = 0;
   let schedulingEnabled = true;
   const submittingRowIds = new Set<string>();
   const pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -101,6 +103,10 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
     return submittingRowIds.size + pollTimers.size < concurrencyLimit;
   };
 
+  const isCurrentRun = (generation: number): boolean => {
+    return active && generation === runGeneration;
+  };
+
   const isSubmittableRow = (row: BatchQueueRow): boolean => {
     return (
       row.status === "waiting" &&
@@ -124,8 +130,8 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
     pollTimers.set(rowId, timer);
   };
 
-  const runScheduler = async (): Promise<void> => {
-    if (!active || !schedulingEnabled) {
+  const runScheduler = async (generation: number = runGeneration): Promise<void> => {
+    if (generation !== runGeneration || !isCurrentRun(generation) || !schedulingEnabled) {
       return;
     }
 
@@ -134,12 +140,12 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
       if (nextRow === undefined) {
         break;
       }
-      void submitRow(nextRow.id);
+      void submitRow(nextRow.id, generation);
     }
   };
 
-  const submitRow = async (rowId: string): Promise<void> => {
-    if (!active) {
+  const submitRow = async (rowId: string, generation: number): Promise<void> => {
+    if (!isCurrentRun(generation)) {
       return;
     }
 
@@ -157,7 +163,7 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
 
     try {
       const response = await options.backendClient.createDownloadJob({ url: row.normalizedUrl! });
-      if (!active) {
+      if (!isCurrentRun(generation)) {
         return;
       }
 
@@ -173,7 +179,7 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
       emitSnapshot();
 
       const pollOnce = async (): Promise<void> => {
-        if (!active) {
+        if (!isCurrentRun(generation)) {
           return;
         }
 
@@ -185,7 +191,7 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
 
         try {
           const job = await options.backendClient.getJob(response.jobId);
-          if (!active) {
+          if (!isCurrentRun(generation)) {
             return;
           }
 
@@ -208,15 +214,18 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
           clearPollTimer(rowId);
           applyTerminalState(latestRow, job);
           emitSnapshot();
-          void runScheduler();
+          void runScheduler(generation);
         } catch (error) {
+          if (!isCurrentRun(generation)) {
+            return;
+          }
           const latestRow = getRowById(rowId);
           clearPollTimer(rowId);
           if (latestRow !== undefined) {
             updateRowFailure(latestRow, error);
           }
           emitSnapshot();
-          void runScheduler();
+          void runScheduler(generation);
         }
       };
 
@@ -224,26 +233,35 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
         void pollOnce();
       });
     } catch (error) {
+      if (!isCurrentRun(generation)) {
+        return;
+      }
       updateRowFailure(row, error);
       emitSnapshot();
     } finally {
+      if (generation !== runGeneration) {
+        return;
+      }
       submittingRowIds.delete(row.id);
       emitSnapshot();
-      void runScheduler();
+      void runScheduler(generation);
     }
   };
 
   const start = (initialRows: BatchQueueRow[]): void => {
+    runGeneration += 1;
+    const generation = runGeneration;
     clearAllPollTimers();
     submittingRowIds.clear();
     rows = initialRows.map((row) => ({ ...row }));
     active = true;
     schedulingEnabled = true;
     emitSnapshot();
-    void runScheduler();
+    void runScheduler(generation);
   };
 
   const stop = (): void => {
+    runGeneration += 1;
     active = false;
     submittingRowIds.clear();
     clearAllPollTimers();
@@ -254,7 +272,7 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
     schedulingEnabled = enabled;
     emitSnapshot();
     if (enabled) {
-      void runScheduler();
+      void runScheduler(runGeneration);
     }
   };
 
@@ -267,36 +285,48 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
   };
 
   const retryEligibleRows = (): number => {
-    let retriedCount = 0;
-    for (const row of rows) {
-      if (!isRetryEligibleTerminalRow(row)) {
-        continue;
+      let retriedCount = 0;
+      for (const row of rows) {
+        if (!isRetryEligibleTerminalRow(row)) {
+          continue;
+        }
+        prepareRowForRetry(row);
+        retriedCount += 1;
       }
-      row.status = "waiting";
-      row.retryEligible = false;
-      row.lastError = null;
-      row.currentJobId = null;
-      retriedCount += 1;
-    }
 
     emitSnapshot();
     if (retriedCount > 0 && schedulingEnabled) {
-      void runScheduler();
+      void runScheduler(runGeneration);
     }
 
-    return retriedCount;
-  };
+      return retriedCount;
+    };
 
-  return {
-    start,
-    stop,
-    pause,
-    resume,
-    retryEligibleRows,
-    setSchedulingEnabled,
-    getSnapshot,
-  };
-}
+    const retryRow = (rowId: string): boolean => {
+      const row = getRowById(rowId);
+      if (!row || !isRetryEligibleTerminalRow(row)) {
+        return false;
+      }
+
+      prepareRowForRetry(row);
+      emitSnapshot();
+      if (schedulingEnabled) {
+        void runScheduler(runGeneration);
+      }
+      return true;
+    };
+
+    return {
+      start,
+      stop,
+      pause,
+      resume,
+      retryEligibleRows,
+      retryRow,
+      setSchedulingEnabled,
+      getSnapshot,
+    };
+  }
 
 function applyTerminalState(row: BatchQueueRow, job: JobState): void {
   row.currentJobId = null;
@@ -310,4 +340,11 @@ function applyTerminalState(row: BatchQueueRow, job: JobState): void {
   row.status = "failed";
   row.retryEligible = true;
   row.lastError = job.error ?? `Job ended with status ${job.status}`;
+}
+
+function prepareRowForRetry(row: BatchQueueRow): void {
+  row.status = "waiting";
+  row.retryEligible = false;
+  row.lastError = null;
+  row.currentJobId = null;
 }

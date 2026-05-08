@@ -47,14 +47,18 @@ export function parseBatchQueueInput(text: string): BatchQueueParseResult {
       return createSkippedRow(index, sourceText, "blank");
     }
 
-    const parsedUrl = tryParseUrl(sourceText);
-    if (parsedUrl === null) {
-      return createSkippedRow(index, sourceText, "invalid_url");
-    }
+      const parsedUrl = tryParseUrl(sourceText);
+      if (parsedUrl === null) {
+        return createSkippedRow(index, sourceText, "invalid_url");
+      }
 
-    if (!isSupportedHost(parsedUrl.hostname)) {
-      return createSkippedRow(index, sourceText, "unsupported_host");
-    }
+      if (!isSupportedScheme(parsedUrl.protocol)) {
+        return createSkippedRow(index, sourceText, "unsupported_host");
+      }
+
+      if (!isSupportedHost(parsedUrl.hostname)) {
+        return createSkippedRow(index, sourceText, "unsupported_host");
+      }
 
     const normalizedUrl = normalizeUrl(parsedUrl);
     if (seenUrls.has(normalizedUrl)) {
@@ -107,7 +111,7 @@ export function summarizeBatchQueue(rows: BatchQueueRow[]): BatchQueueTotals {
 export function isBatchRowRetryEligible(row: BatchQueueRow): boolean {
   return (
     row.retryEligible &&
-    (row.status === "failed" || row.status === "skipped") &&
+    row.status === "failed" &&
     row.normalizedUrl !== null &&
     row.currentJobId === null
   );
@@ -146,6 +150,11 @@ function isSupportedHost(hostname: string): boolean {
   return SUPPORTED_HOSTS.some((host) => {
     return normalizedHost === host || normalizedHost.endsWith(`.${host}`);
   });
+}
+
+function isSupportedScheme(protocol: string): boolean {
+  const normalizedProtocol = protocol.trim().toLowerCase();
+  return normalizedProtocol === "http:" || normalizedProtocol === "https:";
 }
 
 function normalizeUrl(url: URL): string {

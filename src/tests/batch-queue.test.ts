@@ -1,4 +1,5 @@
 import {
+  isBatchRowRetryEligible,
   parseBatchQueueInput,
   summarizeBatchQueue,
   type BatchQueueRow,
@@ -78,6 +79,28 @@ describe("parseBatchQueueInput", () => {
       "unsupported_host",
       null,
     ]);
+  });
+
+  it("rejects non-http schemes even when hostname looks supported", () => {
+    const text = [
+      "ftp://www.douyin.com/video/1",
+      "file://www.douyin.com/video/2",
+      "https://www.douyin.com/video/3",
+    ].join("\n");
+
+    const result = parseBatchQueueInput(text);
+
+    expect(result.rows.map((row) => row.status)).toEqual([
+      "skipped",
+      "skipped",
+      "waiting",
+    ]);
+    expect(result.rows.map((row) => row.skipReason)).toEqual([
+      "unsupported_host",
+      "unsupported_host",
+      null,
+    ]);
+    expect(result.rows[2].normalizedUrl).toBe("https://www.douyin.com/video/3");
   });
 
   it("marks duplicates as skipped using the normalized supported URL", () => {
@@ -208,5 +231,31 @@ describe("summarizeBatchQueue", () => {
       retryEligible: 1,
       readyToSubmit: 1,
     });
+  });
+});
+
+describe("isBatchRowRetryEligible", () => {
+  it("allows retry only for failed terminal rows with normalized url and no active job", () => {
+    const failedRow: BatchQueueRow = {
+      id: "row-failed",
+      sourceText: "https://www.douyin.com/video/10",
+      normalizedUrl: "https://www.douyin.com/video/10",
+      status: "failed",
+      skipReason: null,
+      retryEligible: true,
+      attempt: 1,
+      currentJobId: null,
+      lastJobId: "job-10",
+      lastError: "submit failed",
+    };
+    const skippedRow: BatchQueueRow = {
+      ...failedRow,
+      id: "row-skipped",
+      status: "skipped",
+      skipReason: "duplicate",
+    };
+
+    expect(isBatchRowRetryEligible(failedRow)).toBe(true);
+    expect(isBatchRowRetryEligible(skippedRow)).toBe(false);
   });
 });

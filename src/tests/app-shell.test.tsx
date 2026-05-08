@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   runtimeAvailable: false,
   lifecycleStartMock: vi.fn(),
   openOutputFolderMock: vi.fn(),
+  readImportedBatchTextMock: vi.fn(),
 }));
 
 vi.mock("../services/backendClient", () => ({
@@ -22,6 +23,10 @@ vi.mock("../services/tauriBackendRuntime", () => ({
   isTauriRuntimeAvailable: () => mocks.runtimeAvailable,
   openOutputFolder: (path: string) => mocks.openOutputFolderMock(path),
   TauriBackendRuntime: class {},
+}));
+
+vi.mock("../services/batchImportAdapter", () => ({
+  readImportedBatchText: () => mocks.readImportedBatchTextMock(),
 }));
 
 vi.mock("../services/backendLifecycle", () => {
@@ -54,11 +59,13 @@ describe("App shell", () => {
     mocks.getJobMock.mockReset();
     mocks.lifecycleStartMock.mockReset();
     mocks.openOutputFolderMock.mockReset();
+    mocks.readImportedBatchTextMock.mockReset();
     mocks.lifecycleStartMock.mockResolvedValue({
       state: "ready",
       detail: "Backend is ready.",
     });
     mocks.openOutputFolderMock.mockResolvedValue(undefined);
+    mocks.readImportedBatchTextMock.mockResolvedValue("");
   });
 
   it("renders first-screen workflow controls with single and batch tabs", () => {
@@ -74,7 +81,7 @@ describe("App shell", () => {
     expect(screen.getByRole("heading", { name: "Active job status" })).toBeInTheDocument();
   });
 
-  it("switches to batch placeholder while preserving equal-weight mode controls", () => {
+  it("builds queue rows from pasted multiline urls while preserving equal-weight mode controls", () => {
     render(<App />);
     const singleTab = screen.getByRole("tab", { name: "Single" });
     const batchTab = screen.getByRole("tab", { name: "Batch" });
@@ -86,9 +93,45 @@ describe("App shell", () => {
 
     expect(singleTab).toHaveAttribute("aria-selected", "false");
     expect(batchTab).toHaveAttribute("aria-selected", "true");
-    expect(
-      screen.getByText("Batch controls are scaffolded and will be enabled in Phase 2."),
-    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Batch URLs"), {
+      target: {
+        value: [
+          "https://www.douyin.com/video/1",
+          "https://www.example.com/video/2",
+          "https://www.iesdouyin.com/share/video/3",
+        ].join("\n"),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Build queue" }));
+
+    const batchPanel = screen.getByRole("region", { name: "Batch download panel" });
+    expect(within(batchPanel).getByText("Queue built: 2 ready, 1 skipped.")).toBeInTheDocument();
+    expect(within(batchPanel).getAllByRole("row").length).toBe(4);
+    expect(within(batchPanel).getByText("unsupported host")).toBeInTheDocument();
+  });
+
+  it("imports text through adapter boundary and renders invalid rows as skipped", async () => {
+    mocks.readImportedBatchTextMock.mockResolvedValueOnce(
+      [
+        "https://www.douyin.com/video/100",
+        "not-a-url",
+      ].join("\n"),
+    );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Batch" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import URLs" }));
+
+    await waitFor(() => {
+      expect(mocks.readImportedBatchTextMock).toHaveBeenCalledTimes(1);
+    });
+
+    const batchPanel = screen.getByRole("region", { name: "Batch download panel" });
+    expect(within(batchPanel).getByText("Queue built: 1 ready, 1 skipped.")).toBeInTheDocument();
+    expect(within(batchPanel).getAllByRole("row").length).toBe(3);
+    expect(within(batchPanel).getByText("invalid URL")).toBeInTheDocument();
   });
 
   it("shows required validation for blank single URL submit", () => {

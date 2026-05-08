@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { BackendStatusCard } from "../components/BackendStatusCard";
+import { BatchDownloadPanel } from "../components/BatchDownloadPanel";
 import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import { JobStatusPanel } from "../components/JobStatusPanel";
 import { OutputFolderControl } from "../components/OutputFolderControl";
@@ -7,11 +8,23 @@ import { SingleDownloadPanel } from "../components/SingleDownloadPanel";
 import type { JobState } from "../services/backendClient";
 import { createBackendClient } from "../services/backendClient";
 import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
+import { readImportedBatchText } from "../services/batchImportAdapter";
+import { parseBatchQueueInput, type BatchQueueRow, type BatchQueueTotals } from "../services/batchQueue";
 import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
 import { createJobPoller } from "../services/jobPolling";
 import { isTauriRuntimeAvailable, openOutputFolder, TauriBackendRuntime } from "../services/tauriBackendRuntime";
 
 type Mode = "single" | "batch";
+const EMPTY_BATCH_TOTALS: BatchQueueTotals = {
+  total: 0,
+  waiting: 0,
+  running: 0,
+  success: 0,
+  failed: 0,
+  skipped: 0,
+  retryEligible: 0,
+  readyToSubmit: 0,
+};
 
 export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>("single");
@@ -33,13 +46,18 @@ export function App(): JSX.Element {
   const [jobPanelTone, setJobPanelTone] = useState<"error" | "hint">("hint");
   const [jobDiagnostics, setJobDiagnostics] = useState<string[]>([]);
   const [openingOutputFolder, setOpeningOutputFolder] = useState(false);
+  const [batchInputText, setBatchInputText] = useState("");
+  const [batchRows, setBatchRows] = useState<BatchQueueRow[]>([]);
+  const [batchTotals, setBatchTotals] = useState<BatchQueueTotals>(EMPTY_BATCH_TOTALS);
+  const [batchMessage, setBatchMessage] = useState("Paste multiline URLs or import a text file, then build the queue.");
+  const [batchMessageTone, setBatchMessageTone] = useState<"error" | "hint">("hint");
   const backendClient = useMemo(() => createBackendClient({ baseUrl: "http://127.0.0.1:8787" }), []);
 
   const modeDescription = useMemo(() => {
     if (mode === "single") {
       return "Single link download mode is active.";
     }
-    return "Batch queue mode is available in upcoming phase work.";
+    return "Batch queue mode validates URLs and prepares rows before execution.";
   }, [mode]);
 
   useEffect(() => {
@@ -223,6 +241,33 @@ export function App(): JSX.Element {
     setConfigVersion((version) => version + 1);
   };
 
+  const handleBuildBatchQueue = (text: string): void => {
+    const parseResult = parseBatchQueueInput(text);
+    setBatchRows(parseResult.rows);
+    setBatchTotals(parseResult.totals);
+    if (parseResult.totals.total === 0) {
+      setBatchMessage("Paste multiline URLs or import a text file, then build the queue.");
+      setBatchMessageTone("hint");
+      return;
+    }
+    setBatchMessage(
+      `Queue built: ${parseResult.totals.readyToSubmit} ready, ${parseResult.totals.skipped} skipped.`,
+    );
+    setBatchMessageTone("hint");
+  };
+
+  const handleImportBatchText = async (): Promise<void> => {
+    try {
+      const importedText = await readImportedBatchText();
+      setBatchInputText(importedText);
+      handleBuildBatchQueue(importedText);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setBatchMessage(`Could not import URLs: ${detail}`);
+      setBatchMessageTone("error");
+    }
+  };
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -267,7 +312,18 @@ export function App(): JSX.Element {
               messageTone={submitMessage ? submitMessageTone : "hint"}
             />
           ) : (
-            <p className="batch-placeholder">Batch controls are scaffolded and will be enabled in Phase 2.</p>
+            <BatchDownloadPanel
+              inputText={batchInputText}
+              onInputTextChange={setBatchInputText}
+              onBuildQueue={() => handleBuildBatchQueue(batchInputText)}
+              onImportText={() => {
+                void handleImportBatchText();
+              }}
+              totals={batchTotals}
+              rows={batchRows}
+              message={batchMessage}
+              messageTone={batchMessageTone}
+            />
           )}
         </section>
 

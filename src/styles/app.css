@@ -97,6 +97,16 @@ input {
   font: inherit;
 }
 
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #b6c5d3;
+  font: inherit;
+  resize: vertical;
+  min-height: 120px;
+}
+
 button {
   border: 1px solid #2f608e;
   border-radius: 8px;
@@ -177,6 +187,53 @@ button:disabled {
 .batch-placeholder {
   margin: 0;
   color: #50667b;
+}
+
+.batch-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.batch-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.batch-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.batch-totals .label {
+  display: block;
+  color: #5a6f83;
+  font-size: 0.8rem;
+}
+
+.queue-table-shell {
+  border: 1px solid #d1dce6;
+  border-radius: 10px;
+  overflow: auto;
+}
+
+.queue-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.queue-table th,
+.queue-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e1e8ef;
+}
+
+.queue-table th {
+  background: #eff4f9;
+  color: #2a4158;
 }
 
 .result-actions {

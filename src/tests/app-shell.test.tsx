@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   runtimeAvailable: false,
   lifecycleStartMock: vi.fn(),
   openOutputFolderMock: vi.fn(),
+  captureAndCommitCookiesMock: vi.fn(),
   ensureRuntimeDirectoryMock: vi.fn(),
   writeManagedConfigAtomicMock: vi.fn(),
   readImportedBatchTextMock: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("../services/backendClient", () => ({
 vi.mock("../services/tauriBackendRuntime", () => ({
   isTauriRuntimeAvailable: () => mocks.runtimeAvailable,
   openOutputFolder: (path: string) => mocks.openOutputFolderMock(path),
+  captureAndCommitCookies: (request: unknown) => mocks.captureAndCommitCookiesMock(request),
   ensureRuntimeDirectory: (path: string) => mocks.ensureRuntimeDirectoryMock(path),
   writeManagedConfigAtomic: (path: string, contents: string) =>
     mocks.writeManagedConfigAtomicMock(path, contents),
@@ -66,6 +68,7 @@ import { App } from "../app/App";
     mocks.getJobMock.mockReset();
       mocks.lifecycleStartMock.mockReset();
       mocks.openOutputFolderMock.mockReset();
+      mocks.captureAndCommitCookiesMock.mockReset();
       mocks.ensureRuntimeDirectoryMock.mockReset();
       mocks.writeManagedConfigAtomicMock.mockReset();
       mocks.readImportedBatchTextMock.mockReset();
@@ -74,6 +77,13 @@ import { App } from "../app/App";
       detail: "Backend is ready.",
     });
       mocks.openOutputFolderMock.mockResolvedValue(undefined);
+      mocks.captureAndCommitCookiesMock.mockResolvedValue({
+        status: "missing-runtime",
+        exitCode: null,
+        diagnostics: ["Tauri runtime is unavailable."],
+        cookies: null,
+        error: "tauri-runtime-unavailable",
+      });
       mocks.ensureRuntimeDirectoryMock.mockResolvedValue(undefined);
       mocks.writeManagedConfigAtomicMock.mockResolvedValue(undefined);
       mocks.readImportedBatchTextMock.mockResolvedValue("");
@@ -575,7 +585,7 @@ import { App } from "../app/App";
     expect(within(batchPanel).getByText("invalid URL")).toBeInTheDocument();
     expect(
       within(batchPanel).getByText(
-        "Douyin login cookies may be missing or expired. Use Fetch Cookies again, then Retry failed.",
+        "Douyin login cookies may be missing or expired. Fetch cookies again, or use manual/import cookies, then retry the download. Use Retry failed to try this row again.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByTestId("batch-diagnostics-cache")).toHaveTextContent("RuntimeError: cookie expired");
@@ -848,6 +858,179 @@ import { App } from "../app/App";
     });
     expect(screen.queryByText("job missing")).not.toBeInTheDocument();
     expect(screen.getByTestId("job-diagnostics-cache")).toHaveTextContent("job missing");
+  });
+
+  it("shows cookie recovery actions and retry guidance for single failed jobs", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "job-cookie-single",
+      status: "pending",
+    });
+    mocks.getJobMock.mockResolvedValueOnce({
+      jobId: "job-cookie-single",
+      status: "failed",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 0,
+        failed: 1,
+        skipped: 0,
+      },
+      error: "401 unauthorized: cookie expired, login required",
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Douyin URL"), {
+      target: { value: "https://www.douyin.com/video/cookie-single" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Douyin login cookies may be missing or expired. Fetch cookies again, or use manual/import cookies, then retry the download.",
+        ),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Fetch cookies again" })).toBeInTheDocument();
+    expect(screen.getByText("Retry this job after cookie recovery.")).toBeInTheDocument();
+    expect(screen.getByText("Manual/import cookie fallback remains available.")).toBeInTheDocument();
+  });
+
+  it("keeps cancel diagnostics in logs when cookie recovery is canceled", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "job-cookie-cancel",
+      status: "pending",
+    });
+    mocks.getJobMock.mockResolvedValueOnce({
+      jobId: "job-cookie-cancel",
+      status: "failed",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 0,
+        failed: 1,
+        skipped: 0,
+      },
+      error: "cookie required: login expired",
+    });
+    mocks.captureAndCommitCookiesMock.mockResolvedValueOnce({
+      status: "cancelled",
+      exitCode: null,
+      diagnostics: ["stderr: capture canceled by user"],
+      cookies: null,
+      error: "user canceled",
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Douyin URL"), {
+      target: { value: "https://www.douyin.com/video/cookie-cancel" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Fetch cookies again" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Fetch cookies again" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Cookie recovery was canceled. Existing cookies were unchanged."),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("job-diagnostics-cache")).toHaveTextContent("stderr: capture canceled by user");
+    expect(
+      mocks.captureAndCommitCookiesMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backendRoot: "F:\\Work\\DouyinDownload\\douyin-downloader",
+        managedConfigPath: "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml",
+      }),
+    );
+  });
+
+  it("shows batch cookie recovery action while keeping row retry context visible", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "batch-cookie-job",
+      status: "pending",
+    });
+    mocks.getJobMock.mockResolvedValueOnce({
+      jobId: "batch-cookie-job",
+      status: "failed",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 0,
+        failed: 1,
+        skipped: 0,
+      },
+      error: "401 unauthorized: cookie expired, login required",
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Batch" }));
+    fireEvent.change(screen.getByLabelText("Batch URLs"), {
+      target: {
+        value: "https://www.douyin.com/video/batch-cookie",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Build queue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start batch" }));
+
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText(
+            "Douyin login cookies may be missing or expired. Fetch cookies again, or use manual/import cookies, then retry the download. Use Retry failed to try this row again.",
+          ),
+        ).toBeInTheDocument();
+      },
+      { timeout: 2500 },
+    );
+    expect(screen.getByRole("button", { name: "Fetch cookies again" })).toBeInTheDocument();
+    expect(screen.getByText("Use Retry failed or row Retry after cookie recovery.")).toBeInTheDocument();
+  });
+
+  it("keeps generic failures generic without cookie-specific recovery actions", async () => {
+    mocks.createDownloadJobMock.mockResolvedValueOnce({
+      jobId: "job-generic-failed",
+      status: "pending",
+    });
+    mocks.getJobMock.mockResolvedValueOnce({
+      jobId: "job-generic-failed",
+      status: "failed",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 0,
+        failed: 1,
+        skipped: 0,
+      },
+      error: "Traceback: random backend error",
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Douyin URL"), {
+      target: { value: "https://www.douyin.com/video/generic-failed" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Download failed. Check diagnostics for technical details.")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Fetch cookies again" })).not.toBeInTheDocument();
   });
 
   it("opens the selected output folder for terminal success jobs", async () => {

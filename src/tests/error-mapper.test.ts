@@ -31,8 +31,9 @@ describe("errorMapper", () => {
     const mapped = mapFailedJobError("401 unauthorized: cookie expired, login required");
 
     expect(mapped?.message).toBe(
-      "Douyin login cookies may be missing or expired. Cookie recovery is planned for a later phase; update cookies manually for now.",
+      "Douyin login cookies may be missing or expired. Fetch cookies again, or use manual/import cookies, then retry the download.",
     );
+    expect(mapped?.kind).toBe("cookie-auth");
     expect(mapped?.diagnostics).toContain("401");
   });
 
@@ -40,6 +41,7 @@ describe("errorMapper", () => {
     const mapped = mapFailedJobError("Traceback: random backend error");
 
     expect(mapped?.message).toBe("Download failed. Check diagnostics for technical details.");
+    expect(mapped?.kind).toBe("generic");
     expect(mapped?.diagnostics).toContain("random backend error");
   });
 

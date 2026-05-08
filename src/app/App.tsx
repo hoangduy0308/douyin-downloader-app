@@ -18,6 +18,11 @@ import {
   type BatchQueueTotals,
 } from "../services/batchQueue";
 import { createBatchQueueRunner, type BatchQueueRunnerSnapshot } from "../services/batchQueueRunner";
+import {
+  CookieRecoveryService,
+  TauriCookieRecoveryGateway,
+  type CookieRecoveryResult,
+} from "../services/cookieRecovery";
 import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
 import { createJobPoller } from "../services/jobPolling";
 import {
@@ -46,8 +51,12 @@ const EMPTY_BATCH_TOTALS: BatchQueueTotals = {
   readyToSubmit: 0,
 };
 const OUTPUT_PATH_STORAGE_KEY = "douyin-downloader-app.output-path";
+const BACKEND_ROOT = "F:\\Work\\DouyinDownload\\douyin-downloader";
 const MANAGED_CONFIG_PATH = "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml";
 const DEFAULT_OUTPUT_PATH = "C:\\DouyinDownloads";
+const SINGLE_RETRY_GUIDANCE = "Retry this job after cookie recovery.";
+const BATCH_RETRY_GUIDANCE = "Use Retry failed or row Retry after cookie recovery.";
+const COOKIE_FALLBACK_GUIDANCE = "Manual/import cookie fallback remains available.";
 
 function readPersistedOutputPathFromStorage(): string {
   if (typeof window === "undefined" || !window.localStorage) {
@@ -106,6 +115,8 @@ export function App(): JSX.Element {
   const [jobPanelMessage, setJobPanelMessage] = useState<string>("");
   const [jobPanelTone, setJobPanelTone] = useState<"error" | "hint">("hint");
   const [jobDiagnostics, setJobDiagnostics] = useState<string[]>([]);
+  const [singleCookieRecoveryInProgress, setSingleCookieRecoveryInProgress] = useState(false);
+  const [batchCookieRecoveryInProgress, setBatchCookieRecoveryInProgress] = useState(false);
   const [openingOutputFolder, setOpeningOutputFolder] = useState(false);
   const [batchInputText, setBatchInputText] = useState("");
   const [batchRows, setBatchRows] = useState<BatchQueueRow[]>([]);
@@ -120,6 +131,9 @@ export function App(): JSX.Element {
     return new RuntimeSettingsStore(createRuntimeSettingsWriter());
   }, []);
   const backendClient = useMemo(() => createBackendClient({ baseUrl: "http://127.0.0.1:8787" }), []);
+  const cookieRecoveryService = useMemo(() => {
+    return new CookieRecoveryService(new TauriCookieRecoveryGateway());
+  }, []);
   const batchQueueRunner = useMemo(() => {
     return createBatchQueueRunner({
       backendClient,
@@ -182,13 +196,13 @@ export function App(): JSX.Element {
     setBackendDetail("Starting backend and polling /api/v1/health...");
 
     void lifecycle
-      .start({
-        mode: "dev-python",
-        host: "127.0.0.1",
-        port: 8787,
-        backendRoot: "F:\\Work\\DouyinDownload\\douyin-downloader",
-        configPath: "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml",
-        outputPath,
+        .start({
+          mode: "dev-python",
+          host: "127.0.0.1",
+          port: 8787,
+          backendRoot: BACKEND_ROOT,
+          configPath: MANAGED_CONFIG_PATH,
+          outputPath,
         healthTimeoutMs: 12_000,
         healthPollMs: 400,
       })
@@ -310,11 +324,43 @@ export function App(): JSX.Element {
   const hasTerminalJobState = activeJobState?.status === "success" || activeJobState?.status === "failed";
   const trimmedOutputPath = outputPath.trim();
   const hasConfiguredOutputPath = trimmedOutputPath.length > 0;
+  const singleFailedJobError = useMemo(() => {
+    if (activeJobState?.status !== "failed") {
+      return null;
+    }
+    return mapFailedJobError(activeJobState.error);
+  }, [activeJobState]);
+  const showSingleCookieRecoveryActions = singleFailedJobError?.kind === "cookie-auth";
+  const showBatchCookieRecoveryActions = useMemo(() => {
+    return batchRows.some((row) => {
+      if (row.status !== "failed") {
+        return false;
+      }
+      return mapFailedJobError(row.lastError)?.kind === "cookie-auth";
+    });
+  }, [batchRows]);
   const batchFailureDiagnostics = useMemo(() => {
     return batchRows
       .filter((row) => row.lastError)
       .map((row) => `${row.id}: ${row.lastError}`);
   }, [batchRows]);
+
+  const buildCookieRecoveryRequest = () => {
+    return {
+      backendRoot: BACKEND_ROOT,
+      managedConfigPath: MANAGED_CONFIG_PATH,
+      outputPath: hasConfiguredOutputPath ? trimmedOutputPath : DEFAULT_OUTPUT_PATH,
+      pythonExecutable: "python",
+      browser: "chromium" as const,
+    };
+  };
+
+  const applyRecoveryResultToLogs = (result: CookieRecoveryResult): void => {
+    if (result.diagnostics.length === 0) {
+      return;
+    }
+    setJobDiagnostics((existing) => existing.concat(result.diagnostics));
+  };
 
   const openConfiguredOutputFolder = async (): Promise<{
     message: string;
@@ -380,6 +426,53 @@ export function App(): JSX.Element {
       }
     } finally {
       setOpeningOutputFolder(false);
+    }
+  };
+
+  const toRecoveryTone = (result: CookieRecoveryResult): "error" | "hint" => {
+    if (result.status === "success" || result.status === "cancelled") {
+      return "hint";
+    }
+    return "error";
+  };
+
+  const handleRecoverCookiesForSingle = async (): Promise<void> => {
+    if (singleCookieRecoveryInProgress) {
+      return;
+    }
+    setSingleCookieRecoveryInProgress(true);
+    try {
+      const result = await cookieRecoveryService.captureAndCommit(buildCookieRecoveryRequest());
+      setJobPanelMessage(result.primaryMessage);
+      setJobPanelTone(toRecoveryTone(result));
+      applyRecoveryResultToLogs(result);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setJobPanelMessage("Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback.");
+      setJobPanelTone("error");
+      setJobDiagnostics((existing) => existing.concat(detail));
+    } finally {
+      setSingleCookieRecoveryInProgress(false);
+    }
+  };
+
+  const handleRecoverCookiesForBatch = async (): Promise<void> => {
+    if (batchCookieRecoveryInProgress) {
+      return;
+    }
+    setBatchCookieRecoveryInProgress(true);
+    try {
+      const result = await cookieRecoveryService.captureAndCommit(buildCookieRecoveryRequest());
+      setBatchMessage(result.primaryMessage);
+      setBatchMessageTone(toRecoveryTone(result));
+      applyRecoveryResultToLogs(result);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setBatchMessage("Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback.");
+      setBatchMessageTone("error");
+      setJobDiagnostics((existing) => existing.concat(detail));
+    } finally {
+      setBatchCookieRecoveryInProgress(false);
     }
   };
 
@@ -623,6 +716,13 @@ export function App(): JSX.Element {
                   openOutputDisabled={!hasConfiguredOutputPath || openingOutputFolder}
                   openOutputDisabledReason={hasConfiguredOutputPath ? "" : "Choose an output folder first before opening it."}
                   openOutputInProgress={openingOutputFolder}
+                  showCookieRecoveryActions={showBatchCookieRecoveryActions}
+                  cookieRecoveryInProgress={batchCookieRecoveryInProgress}
+                  retryGuidance={BATCH_RETRY_GUIDANCE}
+                  fallbackGuidance={COOKIE_FALLBACK_GUIDANCE}
+                  onRecoverCookies={() => {
+                    void handleRecoverCookiesForBatch();
+                  }}
                   onOpenOutputFolder={() => {
                     void handleOpenOutputFolderFromBatch();
                   }}
@@ -643,13 +743,20 @@ export function App(): JSX.Element {
           message={jobPanelMessage}
           messageTone={jobPanelTone}
           showResultActions={hasTerminalJobState}
-            openOutputDisabled={!hasConfiguredOutputPath || openingOutputFolder}
-            openOutputDisabledReason={hasConfiguredOutputPath ? "" : "Choose an output folder first before opening it."}
-            openOutputInProgress={openingOutputFolder}
-            onOpenOutputFolder={() => {
-              void handleOpenOutputFolderFromJobStatus();
-            }}
-          />
+          openOutputDisabled={!hasConfiguredOutputPath || openingOutputFolder}
+          openOutputDisabledReason={hasConfiguredOutputPath ? "" : "Choose an output folder first before opening it."}
+          openOutputInProgress={openingOutputFolder}
+          showCookieRecoveryActions={showSingleCookieRecoveryActions}
+          cookieRecoveryInProgress={singleCookieRecoveryInProgress}
+          retryGuidance={SINGLE_RETRY_GUIDANCE}
+          fallbackGuidance={COOKIE_FALLBACK_GUIDANCE}
+          onRecoverCookies={() => {
+            void handleRecoverCookiesForSingle();
+          }}
+          onOpenOutputFolder={() => {
+            void handleOpenOutputFolderFromJobStatus();
+          }}
+        />
         <DiagnosticsPanel backendDiagnostics={backendDiagnostics} jobDiagnostics={jobDiagnostics} />
       </section>
       <div data-testid="backend-diagnostics-cache" hidden>

@@ -9,6 +9,11 @@ interface JobStatusPanelProps {
   openOutputDisabled: boolean;
   openOutputDisabledReason: string;
   openOutputInProgress: boolean;
+  showCookieRecoveryActions: boolean;
+  cookieRecoveryInProgress: boolean;
+  retryGuidance: string;
+  fallbackGuidance: string;
+  onRecoverCookies: () => void;
   onOpenOutputFolder: () => void;
 }
 
@@ -21,6 +26,11 @@ export function JobStatusPanel({
   openOutputDisabled,
   openOutputDisabledReason,
   openOutputInProgress,
+  showCookieRecoveryActions,
+  cookieRecoveryInProgress,
+  retryGuidance,
+  fallbackGuidance,
+  onRecoverCookies,
   onOpenOutputFolder,
 }: JobStatusPanelProps): JSX.Element {
   const statusLabel = getStatusLabel(activeJobId, jobState);
@@ -65,11 +75,20 @@ export function JobStatusPanel({
             <button type="button" onClick={onOpenOutputFolder} disabled={openOutputDisabled}>
               {openOutputInProgress ? "Opening..." : "Open output folder"}
             </button>
-            {openOutputDisabledReason ? <p className="hint">{openOutputDisabledReason}</p> : null}
-          </section>
-        ) : null}
-      </section>
-    );
+              {openOutputDisabledReason ? <p className="hint">{openOutputDisabledReason}</p> : null}
+            </section>
+          ) : null}
+          {showCookieRecoveryActions ? (
+            <section className="result-actions" aria-label="Cookie recovery actions">
+              <button type="button" className="secondary" onClick={onRecoverCookies} disabled={cookieRecoveryInProgress}>
+                {cookieRecoveryInProgress ? "Fetching..." : "Fetch cookies again"}
+              </button>
+              <p className="hint">{retryGuidance}</p>
+              <p className="hint">{fallbackGuidance}</p>
+            </section>
+          ) : null}
+        </section>
+      );
 }
 
 function getStatusLabel(activeJobId: string | null, jobState: JobState | null): string {

@@ -28,6 +28,11 @@ interface BatchDownloadPanelProps {
   openOutputDisabled: boolean;
   openOutputDisabledReason: string;
   openOutputInProgress: boolean;
+  showCookieRecoveryActions: boolean;
+  cookieRecoveryInProgress: boolean;
+  retryGuidance: string;
+  fallbackGuidance: string;
+  onRecoverCookies: () => void;
   onOpenOutputFolder: () => void;
 }
 
@@ -57,6 +62,11 @@ export function BatchDownloadPanel({
   openOutputDisabled,
   openOutputDisabledReason,
   openOutputInProgress,
+  showCookieRecoveryActions,
+  cookieRecoveryInProgress,
+  retryGuidance,
+  fallbackGuidance,
+  onRecoverCookies,
   onOpenOutputFolder,
 }: BatchDownloadPanelProps): JSX.Element {
   return (
@@ -98,15 +108,24 @@ export function BatchDownloadPanel({
             completionSummary={completionSummary}
           />
           <p className={messageTone === "error" ? "status-message status-message-error" : "hint"}>{message}</p>
-          {showResultActions ? (
-            <section className="result-actions" aria-label="Batch result actions">
-              <button type="button" onClick={onOpenOutputFolder} disabled={openOutputDisabled}>
-                {openOutputInProgress ? "Opening..." : "Open output folder"}
-              </button>
-              {openOutputDisabledReason ? <p className="hint">{openOutputDisabledReason}</p> : null}
+            {showResultActions ? (
+              <section className="result-actions" aria-label="Batch result actions">
+                <button type="button" onClick={onOpenOutputFolder} disabled={openOutputDisabled}>
+                  {openOutputInProgress ? "Opening..." : "Open output folder"}
+                </button>
+                {openOutputDisabledReason ? <p className="hint">{openOutputDisabledReason}</p> : null}
+              </section>
+            ) : null}
+            {showCookieRecoveryActions ? (
+              <section className="result-actions" aria-label="Batch cookie recovery actions">
+                <button type="button" className="secondary" onClick={onRecoverCookies} disabled={cookieRecoveryInProgress}>
+                  {cookieRecoveryInProgress ? "Fetching..." : "Fetch cookies again"}
+                </button>
+                <p className="hint">{retryGuidance}</p>
+                <p className="hint">{fallbackGuidance}</p>
+              </section>
+            ) : null}
+              <QueueTable rows={rows} onRetryRow={onRetryRow} />
             </section>
-          ) : null}
-            <QueueTable rows={rows} onRetryRow={onRetryRow} />
-          </section>
-      );
-  }
+        );
+    }

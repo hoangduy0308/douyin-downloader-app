@@ -122,9 +122,9 @@ import { App } from "../app/App";
       expect(screen.queryByLabelText("Search")).not.toBeInTheDocument();
     });
 
-    it("loads persisted output folder before starting managed backend lifecycle", async () => {
-      mocks.runtimeAvailable = true;
-      window.localStorage.setItem(OUTPUT_PATH_STORAGE_KEY, "D:\\Persisted\\Downloads");
+  it("loads persisted output folder before starting managed backend lifecycle", async () => {
+    mocks.runtimeAvailable = true;
+    window.localStorage.setItem(OUTPUT_PATH_STORAGE_KEY, "D:\\Persisted\\Downloads");
 
       render(<App />);
 
@@ -136,12 +136,51 @@ import { App } from "../app/App";
           expect.objectContaining({
             outputPath: "D:\\Persisted\\Downloads",
           }),
-        );
-      });
+      );
     });
+  });
 
-    it("writes scoped advanced controls into managed config without deferred keys", async () => {
-      render(<App />);
+  it("waits for initial managed config write before starting backend lifecycle", async () => {
+    mocks.runtimeAvailable = true;
+    let releaseConfigWrite: (() => void) | null = null;
+    mocks.writeManagedConfigAtomicMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseConfigWrite = resolve;
+        }),
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mocks.writeManagedConfigAtomicMock).toHaveBeenCalled();
+    });
+    expect(mocks.lifecycleStartMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Start download" })).toBeDisabled();
+    expect(screen.getByText("Start is disabled while runtime settings are initializing.")).toBeInTheDocument();
+
+    releaseConfigWrite?.();
+
+    await waitFor(() => {
+      expect(mocks.lifecycleStartMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("keeps submit blocked when runtime settings initialization fails", async () => {
+    mocks.runtimeAvailable = true;
+    mocks.writeManagedConfigAtomicMock.mockRejectedValue(new Error("disk-full"));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Start is disabled because runtime settings failed to initialize.")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Start download" })).toBeDisabled();
+    expect(mocks.lifecycleStartMock).not.toHaveBeenCalled();
+  });
+
+  it("writes scoped advanced controls into managed config without deferred keys", async () => {
+    render(<App />);
 
       fireEvent.click(screen.getByRole("button", { name: "Advanced controls" }));
       fireEvent.change(screen.getByLabelText("Retry count"), {
@@ -695,9 +734,7 @@ import { App } from "../app/App";
     render(<App />);
 
     expect(screen.getByRole("button", { name: "Start download" })).toBeDisabled();
-    expect(
-      screen.getByText("Start is disabled while backend readiness is pending."),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Start is disabled while (runtime settings are initializing|backend readiness is pending)\./)).toBeInTheDocument();
   });
 
   it("disables submit while config version is waiting for backend restart", async () => {

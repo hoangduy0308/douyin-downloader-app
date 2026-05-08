@@ -127,6 +127,9 @@ export function App(): JSX.Element {
   const [advancedOptions, setAdvancedOptions] = useState<RuntimeAdvancedOptions>(
     createDefaultRuntimeAdvancedOptions(),
   );
+  const [settingsInitializationState, setSettingsInitializationState] = useState<
+    "pending" | "ready" | "error"
+  >("pending");
   const [configVersion, setConfigVersion] = useState(1);
   const [backendReadyConfigVersion, setBackendReadyConfigVersion] = useState(1);
   const [backendStatus, setBackendStatus] = useState<"starting" | "ready" | "error" | "stopped">("starting");
@@ -225,6 +228,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     let mounted = true;
+    setSettingsInitializationState("pending");
     void settingsStore.initialize().then((snapshot) => {
       if (!mounted) {
         return;
@@ -234,11 +238,13 @@ export function App(): JSX.Element {
       }
       setAdvancedOptions(snapshot.advancedOptions);
       setConfigVersion(snapshot.configVersion);
+      setSettingsInitializationState("ready");
     }).catch((error) => {
       if (!mounted) {
         return;
       }
       const detail = error instanceof Error ? error.message : String(error);
+      setSettingsInitializationState("error");
       setBackendStatus("error");
       setBackendDetail(`Settings initialization failed: ${detail}`);
       appendLog("error", "settings", detail, { action: "initialize" });
@@ -253,6 +259,9 @@ export function App(): JSX.Element {
       setBackendStatus("ready");
       setBackendDetail("Frontend preview mode. Managed lifecycle runs in Tauri desktop runtime.");
       setBackendReadyConfigVersion(configVersion);
+      return undefined;
+    }
+    if (settingsInitializationState !== "ready") {
       return undefined;
     }
 
@@ -302,7 +311,7 @@ export function App(): JSX.Element {
       mounted = false;
       void lifecycle.stop();
     };
-    }, [configVersion, outputPath, settingsStore]);
+    }, [configVersion, outputPath, settingsInitializationState, settingsStore]);
 
   useEffect(() => {
     let mounted = true;
@@ -466,11 +475,25 @@ export function App(): JSX.Element {
     }
   }, [appendLog, batchRows, batchRunId, outputPath, upsertHistoryEntry]);
 
+  const requiresManagedSettingsGate = isTauriRuntimeAvailable();
   const backendReadyForSubmit = backendStatus === "ready";
   const configReadyForSubmit = configVersion === backendReadyConfigVersion;
-    const submitDisabled = !backendReadyForSubmit || !configReadyForSubmit || isSubmitting;
+    const submitDisabled =
+      (requiresManagedSettingsGate && settingsInitializationState !== "ready") ||
+      !backendReadyForSubmit ||
+      !configReadyForSubmit ||
+      isSubmitting;
 
   const submitStatusMessage = useMemo(() => {
+      if (requiresManagedSettingsGate && settingsInitializationState === "pending") {
+        return "Start is disabled while runtime settings are initializing.";
+      }
+      if (requiresManagedSettingsGate && settingsInitializationState === "error") {
+        return "Start is disabled because runtime settings failed to initialize.";
+      }
+      if (settingsInitializationState === "pending") {
+        return "";
+      }
       if (isSubmitting) {
         return "Submitting download request...";
       }
@@ -481,7 +504,7 @@ export function App(): JSX.Element {
         return "Start is disabled while backend readiness is pending.";
       }
       return "";
-    }, [backendReadyForSubmit, configReadyForSubmit, isSubmitting]);
+    }, [backendReadyForSubmit, configReadyForSubmit, isSubmitting, requiresManagedSettingsGate, settingsInitializationState]);
   const batchHasRunningRows = batchRows.some((row) => row.status === "running");
   const batchHasWaitingRows = batchRows.some((row) => row.status === "waiting");
   const batchHasTerminalRows = batchRows.some((row) => row.status === "success" || row.status === "failed");

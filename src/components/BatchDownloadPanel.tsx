@@ -15,6 +15,7 @@ interface BatchDownloadPanelProps {
   activeRowUrl: string | null;
   activeJobId: string | null;
   totals: BatchQueueTotals;
+  completionSummary: string | null;
   rows: BatchQueueRow[];
   message: string;
   messageTone: "error" | "hint";
@@ -22,6 +23,11 @@ interface BatchDownloadPanelProps {
   pauseDisabled: boolean;
   resumeDisabled: boolean;
   retryDisabled: boolean;
+  showResultActions: boolean;
+  openOutputDisabled: boolean;
+  openOutputDisabledReason: string;
+  openOutputInProgress: boolean;
+  onOpenOutputFolder: () => void;
 }
 
 export function BatchDownloadPanel({
@@ -37,6 +43,7 @@ export function BatchDownloadPanel({
   activeRowUrl,
   activeJobId,
   totals,
+  completionSummary,
   rows,
   message,
   messageTone,
@@ -44,6 +51,11 @@ export function BatchDownloadPanel({
   pauseDisabled,
   resumeDisabled,
   retryDisabled,
+  showResultActions,
+  openOutputDisabled,
+  openOutputDisabledReason,
+  openOutputInProgress,
+  onOpenOutputFolder,
 }: BatchDownloadPanelProps): JSX.Element {
   return (
     <section className="batch-panel" aria-label="Batch download panel">
@@ -76,14 +88,23 @@ export function BatchDownloadPanel({
             Import URLs
           </button>
         </div>
-        <BatchStatusPanel
-          queueStatusLabel={queueStatusLabel}
-          activeRowUrl={activeRowUrl}
-          activeJobId={activeJobId}
-          totals={totals}
-        />
-        <p className={messageTone === "error" ? "status-message status-message-error" : "hint"}>{message}</p>
-        <QueueTable rows={rows} />
-      </section>
-  );
+          <BatchStatusPanel
+            queueStatusLabel={queueStatusLabel}
+            activeRowUrl={activeRowUrl}
+            activeJobId={activeJobId}
+            totals={totals}
+            completionSummary={completionSummary}
+          />
+          <p className={messageTone === "error" ? "status-message status-message-error" : "hint"}>{message}</p>
+          {showResultActions ? (
+            <section className="result-actions" aria-label="Batch result actions">
+              <button type="button" onClick={onOpenOutputFolder} disabled={openOutputDisabled}>
+                {openOutputInProgress ? "Opening..." : "Open output folder"}
+              </button>
+              {openOutputDisabledReason ? <p className="hint">{openOutputDisabledReason}</p> : null}
+            </section>
+          ) : null}
+          <QueueTable rows={rows} />
+        </section>
+    );
 }

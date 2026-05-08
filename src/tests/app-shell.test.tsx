@@ -307,9 +307,12 @@ describe("App shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start batch" }));
 
     await waitFor(() => {
-      expect(screen.getByText("submit failed")).toBeInTheDocument();
+      expect(
+        screen.getByText("Download failed. Use Retry failed to try this row again."),
+      ).toBeInTheDocument();
     });
     expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("batch-diagnostics-cache")).toHaveTextContent("submit failed");
     expect(screen.getByRole("button", { name: "Retry failed" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Retry failed" }));
@@ -317,6 +320,100 @@ describe("App shell", () => {
 
     await waitFor(() => {
       expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("shows terminal batch summary from row states after retry and reuses open-folder action", async () => {
+    mocks.createDownloadJobMock
+      .mockResolvedValueOnce({
+        jobId: "batch-job-a",
+        status: "pending",
+      })
+      .mockResolvedValueOnce({
+        jobId: "batch-job-b",
+        status: "pending",
+      })
+      .mockResolvedValueOnce({
+        jobId: "batch-job-a-retry",
+        status: "pending",
+      });
+    mocks.getJobMock.mockImplementation(async (jobId: string) => {
+      if (jobId === "batch-job-a") {
+        return {
+          jobId,
+          status: "failed",
+          submittedAt: "2026-05-08T03:00:00Z",
+          startedAt: "2026-05-08T03:00:01Z",
+          finishedAt: "2026-05-08T03:00:03Z",
+          counts: {
+            total: 1,
+            success: 0,
+            failed: 1,
+            skipped: 0,
+          },
+          error: "RuntimeError: cookie expired",
+        };
+      }
+      return {
+        jobId,
+        status: "success",
+        submittedAt: "2026-05-08T03:00:00Z",
+        startedAt: "2026-05-08T03:00:01Z",
+        finishedAt: "2026-05-08T03:00:03Z",
+        counts: {
+          total: 1,
+          success: 1,
+          failed: 0,
+          skipped: 0,
+        },
+        error: null,
+      };
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Download location"), {
+      target: { value: "D:\\Media\\DouyinDownloads" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Batch" }));
+    fireEvent.change(screen.getByLabelText("Batch URLs"), {
+      target: {
+        value: [
+          "https://www.douyin.com/video/fail-then-retry",
+          "not-a-url",
+          "https://www.iesdouyin.com/share/video/success",
+        ].join("\n"),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Build queue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start batch" }));
+
+    expect(screen.queryByText("Batch finished: 1 succeeded, 1 failed, 1 skipped.")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Batch finished: 1 succeeded, 1 failed, 1 skipped.")).toBeInTheDocument();
+    });
+
+    const batchPanel = screen.getByRole("region", { name: "Batch download panel" });
+    expect(within(batchPanel).getByText("invalid URL")).toBeInTheDocument();
+    expect(within(batchPanel).getByText("Download failed. Use Retry failed to try this row again.")).toBeInTheDocument();
+    expect(screen.getByTestId("batch-diagnostics-cache")).toHaveTextContent("RuntimeError: cookie expired");
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry failed" }));
+
+    await waitFor(() => {
+      expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(3);
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Batch finished: 2 succeeded, 0 failed, 1 skipped.")).toBeInTheDocument();
+    });
+
+    fireEvent.click(within(batchPanel).getByRole("button", { name: "Open output folder" }));
+    await waitFor(() => {
+      expect(mocks.openOutputFolderMock).toHaveBeenCalledWith("D:\\Media\\DouyinDownloads");
     });
   });
 

@@ -5,6 +5,7 @@ interface BatchStatusPanelProps {
   activeRowUrl: string | null;
   activeJobId: string | null;
   totals: BatchQueueTotals;
+  completionSummary: string | null;
 }
 
 export function BatchStatusPanel({
@@ -12,6 +13,7 @@ export function BatchStatusPanel({
   activeRowUrl,
   activeJobId,
   totals,
+  completionSummary,
 }: BatchStatusPanelProps): JSX.Element {
   return (
     <section className="batch-status-panel" aria-label="Batch queue status">
@@ -27,7 +29,7 @@ export function BatchStatusPanel({
         <span className="label">Active job</span>
         <strong>{activeJobId ?? "-"}</strong>
       </div>
-      <div className="batch-totals" aria-label="Batch queue totals">
+        <div className="batch-totals" aria-label="Batch queue totals">
         <div>
           <span className="label">Total</span>
           <strong>{totals.total}</strong>
@@ -48,7 +50,8 @@ export function BatchStatusPanel({
           <span className="label">Skipped</span>
           <strong>{totals.skipped}</strong>
         </div>
-      </div>
-    </section>
+        </div>
+        {completionSummary ? <p className="batch-completion-summary">{completionSummary}</p> : null}
+      </section>
   );
 }

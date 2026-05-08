@@ -233,6 +233,12 @@ button:disabled {
   word-break: break-all;
 }
 
+.batch-completion-summary {
+  margin: 0;
+  font-weight: 600;
+  color: #204c2f;
+}
+
 .queue-table-shell {
   border: 1px solid #d1dce6;
   border-radius: 10px;

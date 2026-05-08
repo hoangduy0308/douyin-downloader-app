@@ -9,7 +9,13 @@ import type { JobState } from "../services/backendClient";
 import { createBackendClient } from "../services/backendClient";
 import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
 import { readImportedBatchText } from "../services/batchImportAdapter";
-import { isBatchRowRetryEligible, parseBatchQueueInput, type BatchQueueRow, type BatchQueueTotals } from "../services/batchQueue";
+import {
+  isBatchRowRetryEligible,
+  parseBatchQueueInput,
+  summarizeBatchQueue,
+  type BatchQueueRow,
+  type BatchQueueTotals,
+} from "../services/batchQueue";
 import { createBatchQueueRunner, type BatchQueueRunnerSnapshot } from "../services/batchQueueRunner";
 import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
 import { createJobPoller } from "../services/jobPolling";
@@ -192,6 +198,16 @@ export function App(): JSX.Element {
   const batchHasTerminalRows = batchRows.some((row) => row.status === "success" || row.status === "failed");
   const batchHasRetryEligibleRows = batchRows.some((row) => isBatchRowRetryEligible(row));
   const batchHasInFlightRows = batchHasRunningRows || batchInFlightSubmissions > 0;
+  const batchFinalTotals = useMemo(() => summarizeBatchQueue(batchRows), [batchRows]);
+  const isBatchQueueComplete =
+    batchStarted &&
+    batchFinalTotals.total > 0 &&
+    batchFinalTotals.waiting === 0 &&
+    batchFinalTotals.running === 0 &&
+    batchInFlightSubmissions === 0;
+  const batchCompletionSummary = isBatchQueueComplete
+    ? `Batch finished: ${batchFinalTotals.success} succeeded, ${batchFinalTotals.failed} failed, ${batchFinalTotals.skipped} skipped.`
+    : null;
   const activeBatchRow = batchRows.find((row) => row.status === "running");
   const batchQueueStatusLabel = useMemo(() => {
     if (!batchStarted) {
@@ -212,28 +228,74 @@ export function App(): JSX.Element {
   const hasTerminalJobState = activeJobState?.status === "success" || activeJobState?.status === "failed";
   const trimmedOutputPath = outputPath.trim();
   const hasConfiguredOutputPath = trimmedOutputPath.length > 0;
+  const batchFailureDiagnostics = useMemo(() => {
+    return batchRows
+      .filter((row) => row.lastError)
+      .map((row) => `${row.id}: ${row.lastError}`);
+  }, [batchRows]);
 
-  const handleOpenOutputFolder = async (): Promise<void> => {
+  const openConfiguredOutputFolder = async (): Promise<{
+    message: string;
+    tone: "error" | "hint";
+    diagnostic: string | null;
+  }> => {
     if (!hasConfiguredOutputPath) {
-      setJobPanelMessage("Choose an output folder first before opening it.");
-      setJobPanelTone("hint");
-      return;
+      return {
+        message: "Choose an output folder first before opening it.",
+        tone: "hint",
+        diagnostic: null,
+      };
     }
 
-    setOpeningOutputFolder(true);
     try {
       await openOutputFolder(trimmedOutputPath);
-      setJobPanelMessage("Opened the selected output folder.");
-      setJobPanelTone("hint");
+      return {
+        message: "Opened the selected output folder.",
+        tone: "hint",
+        diagnostic: null,
+      };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      setJobDiagnostics((existing) => existing.concat(detail));
       if (detail.toLowerCase().includes("does not exist")) {
-        setJobPanelMessage("The selected output folder is missing. Recreate it or choose a different folder.");
-      } else {
-        setJobPanelMessage("Could not open the selected output folder. Check diagnostics for details.");
+        return {
+          message: "The selected output folder is missing. Recreate it or choose a different folder.",
+          tone: "error",
+          diagnostic: detail,
+        };
       }
-      setJobPanelTone("error");
+      return {
+        message: "Could not open the selected output folder. Check diagnostics for details.",
+        tone: "error",
+        diagnostic: detail,
+      };
+    }
+  };
+
+  const handleOpenOutputFolderFromJobStatus = async (): Promise<void> => {
+    setOpeningOutputFolder(true);
+    try {
+      const result = await openConfiguredOutputFolder();
+      setJobPanelMessage(result.message);
+      setJobPanelTone(result.tone);
+      const diagnostic = result.diagnostic;
+      if (diagnostic !== null) {
+        setJobDiagnostics((existing) => existing.concat(diagnostic));
+      }
+    } finally {
+      setOpeningOutputFolder(false);
+    }
+  };
+
+  const handleOpenOutputFolderFromBatch = async (): Promise<void> => {
+    setOpeningOutputFolder(true);
+    try {
+      const result = await openConfiguredOutputFolder();
+      setBatchMessage(result.message);
+      setBatchMessageTone(result.tone);
+      const diagnostic = result.diagnostic;
+      if (diagnostic !== null) {
+        setJobDiagnostics((existing) => existing.concat(diagnostic));
+      }
     } finally {
       setOpeningOutputFolder(false);
     }
@@ -403,31 +465,39 @@ export function App(): JSX.Element {
               messageTone={submitMessage ? submitMessageTone : "hint"}
             />
           ) : (
-              <BatchDownloadPanel
-                inputText={batchInputText}
-                onInputTextChange={setBatchInputText}
-                onBuildQueue={() => handleBuildBatchQueue(batchInputText)}
-                onStartQueue={handleStartBatchQueue}
+                <BatchDownloadPanel
+                  inputText={batchInputText}
+                  onInputTextChange={setBatchInputText}
+                  onBuildQueue={() => handleBuildBatchQueue(batchInputText)}
+                  onStartQueue={handleStartBatchQueue}
                 onPauseQueue={handlePauseBatchQueue}
                 onResumeQueue={handleResumeBatchQueue}
                 onRetryQueue={handleRetryBatchQueue}
                 onImportText={() => {
                   void handleImportBatchText();
-                }}
-                totals={batchTotals}
-                rows={batchRows}
-                queueStatusLabel={batchQueueStatusLabel}
-                activeRowUrl={activeBatchRow?.normalizedUrl ?? activeBatchRow?.sourceText ?? null}
-                activeJobId={activeBatchRow?.currentJobId ?? null}
-                message={batchMessage}
+                  }}
+                  totals={batchTotals}
+                  completionSummary={batchCompletionSummary}
+                  rows={batchRows}
+                  queueStatusLabel={batchQueueStatusLabel}
+                  activeRowUrl={activeBatchRow?.normalizedUrl ?? activeBatchRow?.sourceText ?? null}
+                  activeJobId={activeBatchRow?.currentJobId ?? null}
+                  message={batchMessage}
                 messageTone={batchMessageTone}
-                startDisabled={submitDisabled || batchTotals.readyToSubmit === 0 || batchHasRunningRows}
-                pauseDisabled={!batchStarted || !batchSchedulingEnabled || !batchHasWaitingRows}
-                resumeDisabled={!batchStarted || batchSchedulingEnabled || !batchHasWaitingRows}
-                retryDisabled={!batchStarted || !batchHasRetryEligibleRows || batchHasInFlightRows}
-              />
-            )}
-          </section>
+                  startDisabled={submitDisabled || batchTotals.readyToSubmit === 0 || batchHasRunningRows}
+                  pauseDisabled={!batchStarted || !batchSchedulingEnabled || !batchHasWaitingRows}
+                  resumeDisabled={!batchStarted || batchSchedulingEnabled || !batchHasWaitingRows}
+                  retryDisabled={!batchStarted || !batchHasRetryEligibleRows || batchHasInFlightRows}
+                  showResultActions={isBatchQueueComplete}
+                  openOutputDisabled={!hasConfiguredOutputPath || openingOutputFolder}
+                  openOutputDisabledReason={hasConfiguredOutputPath ? "" : "Choose an output folder first before opening it."}
+                  openOutputInProgress={openingOutputFolder}
+                  onOpenOutputFolder={() => {
+                    void handleOpenOutputFolderFromBatch();
+                  }}
+                />
+              )}
+            </section>
 
         <JobStatusPanel
           activeJobId={activeJobId}
@@ -435,22 +505,25 @@ export function App(): JSX.Element {
           message={jobPanelMessage}
           messageTone={jobPanelTone}
           showResultActions={hasTerminalJobState}
-          openOutputDisabled={!hasConfiguredOutputPath || openingOutputFolder}
-          openOutputDisabledReason={hasConfiguredOutputPath ? "" : "Choose an output folder first before opening it."}
-          openOutputInProgress={openingOutputFolder}
-          onOpenOutputFolder={() => {
-            void handleOpenOutputFolder();
-          }}
-        />
+            openOutputDisabled={!hasConfiguredOutputPath || openingOutputFolder}
+            openOutputDisabledReason={hasConfiguredOutputPath ? "" : "Choose an output folder first before opening it."}
+            openOutputInProgress={openingOutputFolder}
+            onOpenOutputFolder={() => {
+              void handleOpenOutputFolderFromJobStatus();
+            }}
+          />
         <DiagnosticsPanel backendDiagnostics={backendDiagnostics} jobDiagnostics={jobDiagnostics} />
       </section>
       <div data-testid="backend-diagnostics-cache" hidden>
         {backendDiagnostics.join(" | ")}
       </div>
-      <div data-testid="job-diagnostics-cache" hidden>
-        {jobDiagnostics.join(" | ")}
-      </div>
-    </main>
+        <div data-testid="job-diagnostics-cache" hidden>
+          {jobDiagnostics.join(" | ")}
+        </div>
+        <div data-testid="batch-diagnostics-cache" hidden>
+          {batchFailureDiagnostics.join(" | ")}
+        </div>
+      </main>
   );
 }
 

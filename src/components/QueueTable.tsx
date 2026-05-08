@@ -46,6 +46,9 @@ function getStatusLabel(status: BatchQueueRow["status"]): string {
 }
 
 function getReasonLabel(row: BatchQueueRow): string {
+  if (row.status === "failed") {
+    return "Download failed. Use Retry failed to try this row again.";
+  }
   if (row.lastError) {
     return row.lastError;
   }

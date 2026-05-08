@@ -2,9 +2,9 @@
     "schema_version":  "1.1",
     "feature_slug":  "windows-desktop-downloader-ui",
     "mode":  "standard",
-    "active_skill":  "swarming",
-    "phase":  "execution-complete",
-    "phase_number":  1,
+    "active_skill":  "reviewing",
+    "phase":  "review-phase4-awaiting-closeout-decision",
+    "phase_number":  4,
     "epic_id":  "douyin-downloader-app-irx",
     "approved_gates":  {
                            "context":  false,
@@ -13,13 +13,7 @@
                            "review":  false
                        },
     "active_beads":  [
-                         "douyin-downloader-app-irx.1",
-                         "douyin-downloader-app-irx.2",
-                         "douyin-downloader-app-irx.3",
-                         "douyin-downloader-app-irx.4",
-                         "douyin-downloader-app-irx.5",
-                         "douyin-downloader-app-irx.6",
-                         "douyin-downloader-app-irx.7"
+
                      ],
     "active_workers":  [
 
@@ -27,9 +21,9 @@
     "blockers":  [
 
                  ],
-    "focus":  "history/windows-desktop-downloader-ui/phase-1-story-map.md",
-    "summary":  "Swarming resume complete for Phase 1: bead .7 rescued and closed; verification green with tauri managed-backend health evidence.",
-    "next_action":  "Return to planning for Phase 2 preparation, then run validating before next swarming execution.",
+    "focus":  "douyin-downloader-app-irx",
+    "summary":  "Review Phase 4 checks are green: epic children closed, prior P1 closed, npm test passed, and npm run build passed.",
+    "next_action":  "Choose closeout path: create PR, merge directly, keep branch for further work, or discard branch.",
     "deferred_beads":  [
 
                        ],
@@ -39,5 +33,5 @@
                                  "learnings_file":  "",
                                  "critical_promotions":  0
                              },
-    "last_updated":  "2026-05-08T15:33:04.2032565+07:00"
+    "last_updated":  "2026-05-08T22:18:42+07:00"
 }

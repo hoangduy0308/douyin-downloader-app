@@ -18,4 +18,4 @@ After completing these steps, briefly confirm what context you restored and only
 # KHUYM: compact_prompt end
 
 [features]
-codex_hooks = true
+hooks = true

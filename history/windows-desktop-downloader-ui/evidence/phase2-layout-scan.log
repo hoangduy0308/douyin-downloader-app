@@ -1,0 +1,23 @@
+﻿### src/styles/app.css
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:197: .batch-toolbar {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:203: .batch-totals {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:209: .batch-totals .label {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:242: .queue-table-shell {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:248: .queue-table {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:254: .queue-table th,
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:255: .queue-table td {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:262: .queue-table th {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:267: .queue-table tbody tr[data-status="running"] td {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:271: .queue-table tbody tr[data-status="success"] td {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:275: .queue-table tbody tr[data-status="failed"] td {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:312: @media (max-width: 900px) {
+F:\Work\DouyinDownload\douyin-downloader-app\src\styles\app.css:325: .batch-totals {
+
+### src/components/BatchStatusPanel.tsx
+F:\Work\DouyinDownload\douyin-downloader-app\src\components\BatchStatusPanel.tsx:32: <div className="batch-totals" aria-label="Batch queue totals">
+F:\Work\DouyinDownload\douyin-downloader-app\src\components\BatchStatusPanel.tsx:54: {completionSummary ? <p className="batch-completion-summary">{completionSummary}</p> : null}
+
+### src/tests/app-shell.test.tsx
+F:\Work\DouyinDownload\douyin-downloader-app\src\tests\app-shell.test.tsx:199: const totalsPanel = within(statusPanel).getByLabelText("Batch queue totals");
+F:\Work\DouyinDownload\douyin-downloader-app\src\tests\app-shell.test.tsx:255: expect(screen.getByText("Queue paused. Active jobs continue polling to terminal state.")).toBeInTheDocument();
+

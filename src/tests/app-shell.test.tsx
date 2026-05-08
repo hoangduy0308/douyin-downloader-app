@@ -202,6 +202,124 @@ describe("App shell", () => {
     expect(within(skippedTotalsCell as HTMLDivElement).getByText("1")).toBeInTheDocument();
   });
 
+  it("pauses new batch starts while active jobs continue to finish, then resumes waiting rows", async () => {
+    mocks.createDownloadJobMock
+      .mockResolvedValueOnce({
+        jobId: "batch-job-1",
+        status: "pending",
+      })
+      .mockResolvedValueOnce({
+        jobId: "batch-job-2",
+        status: "pending",
+      })
+      .mockResolvedValueOnce({
+        jobId: "batch-job-3",
+        status: "pending",
+      });
+    mocks.getJobMock.mockImplementation(async (jobId: string) => ({
+      jobId,
+      status: "success",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 1,
+        failed: 0,
+        skipped: 0,
+      },
+      error: null,
+    }));
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Batch" }));
+    fireEvent.change(screen.getByLabelText("Batch URLs"), {
+      target: {
+        value: [
+          "https://www.douyin.com/video/101",
+          "https://www.douyin.com/video/102",
+          "https://www.douyin.com/video/103",
+        ].join("\n"),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Build queue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start batch" }));
+
+    await waitFor(() => {
+      expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.getByRole("button", { name: "Pause queue" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Pause queue" }));
+
+    expect(screen.getByText("Queue paused. Active jobs continue polling to terminal state.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pause queue" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Resume queue" })).toBeEnabled();
+
+    await waitFor(
+      () => {
+        expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 2500 },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume queue" }));
+    await waitFor(() => {
+      expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  it("enables retry only for eligible terminal rows and never retries parser-skipped duplicates", async () => {
+    mocks.createDownloadJobMock
+      .mockRejectedValueOnce(new Error("submit failed"))
+      .mockResolvedValueOnce({
+        jobId: "batch-job-retry",
+        status: "pending",
+      });
+    mocks.getJobMock.mockResolvedValue({
+      jobId: "batch-job-retry",
+      status: "success",
+      submittedAt: "2026-05-08T03:00:00Z",
+      startedAt: "2026-05-08T03:00:01Z",
+      finishedAt: "2026-05-08T03:00:03Z",
+      counts: {
+        total: 1,
+        success: 1,
+        failed: 0,
+        skipped: 0,
+      },
+      error: null,
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Batch" }));
+    fireEvent.change(screen.getByLabelText("Batch URLs"), {
+      target: {
+        value: [
+          "https://www.douyin.com/video/retry-me",
+          "https://www.douyin.com/video/retry-me",
+        ].join("\n"),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Build queue" }));
+    expect(screen.getByRole("button", { name: "Retry failed" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Start batch" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("submit failed")).toBeInTheDocument();
+    });
+    expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Retry failed" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry failed" }));
+    expect(screen.getByRole("button", { name: "Retry failed" })).toBeDisabled();
+
+    await waitFor(() => {
+      expect(mocks.createDownloadJobMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("shows required validation for blank single URL submit", () => {
     render(<App />);
 

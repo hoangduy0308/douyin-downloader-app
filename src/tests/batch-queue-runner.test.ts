@@ -242,4 +242,134 @@ describe("batchQueueRunner", () => {
     const snapshot = runner.getSnapshot();
     expect(snapshot.rows[0]).toEqual(expect.objectContaining({ lastJobId: "job-1", attempt: 1 }));
   });
+
+  it("pauses new scheduling while active jobs continue polling to terminal state", async () => {
+    const parseResult = parseBatchQueueInput(
+      [
+        "https://www.douyin.com/video/100",
+        "https://www.douyin.com/video/200",
+        "https://www.douyin.com/video/300",
+      ].join("\n"),
+    );
+    const createDownloadJob = vi
+      .fn<BackendClient["createDownloadJob"]>()
+      .mockResolvedValueOnce({ jobId: "job-1", status: "pending" });
+    const getJob = vi
+      .fn<BackendClient["getJob"]>()
+      .mockResolvedValueOnce(buildJob({ jobId: "job-1", status: "pending" }))
+      .mockResolvedValueOnce(buildJob({ jobId: "job-1", status: "success", finishedAt: "2026-05-08T00:10:00Z" }));
+    const runner = createBatchQueueRunner({
+      backendClient: {
+        createDownloadJob,
+        getJob,
+      } satisfies Pick<BackendClient, "createDownloadJob" | "getJob">,
+      concurrencyLimit: 1,
+    });
+
+    runner.start(parseResult.rows);
+    await vi.runAllTicks();
+    runner.pause();
+    await vi.runAllTimersAsync();
+
+    const snapshot = runner.getSnapshot();
+    expect(createDownloadJob).toHaveBeenCalledTimes(1);
+    expect(snapshot.schedulingEnabled).toBe(false);
+    expect(snapshot.rows[0]).toEqual(expect.objectContaining({ status: "success" }));
+    expect(snapshot.rows[1]).toEqual(expect.objectContaining({ status: "waiting", currentJobId: null }));
+    expect(snapshot.rows[2]).toEqual(expect.objectContaining({ status: "waiting", currentJobId: null }));
+    expect(snapshot.totals.waiting).toBe(2);
+    expect(snapshot.totals.success).toBe(1);
+  });
+
+  it("resumes scheduling and starts remaining waiting rows", async () => {
+    const parseResult = parseBatchQueueInput(
+      ["https://www.douyin.com/video/100", "https://www.douyin.com/video/200"].join("\n"),
+    );
+    const createDownloadJob = vi
+      .fn<BackendClient["createDownloadJob"]>()
+      .mockResolvedValueOnce({ jobId: "job-1", status: "pending" })
+      .mockResolvedValueOnce({ jobId: "job-2", status: "pending" });
+    const getJob = vi.fn<BackendClient["getJob"]>().mockImplementation(async (jobId) => {
+      return buildJob({
+        jobId,
+        status: "success",
+        finishedAt: "2026-05-08T00:11:00Z",
+      });
+    });
+    const runner = createBatchQueueRunner({
+      backendClient: {
+        createDownloadJob,
+        getJob,
+      } satisfies Pick<BackendClient, "createDownloadJob" | "getJob">,
+      concurrencyLimit: 1,
+    });
+
+    runner.start(parseResult.rows);
+    await vi.runAllTicks();
+    runner.pause();
+    await vi.runAllTimersAsync();
+    runner.resume();
+    await vi.runAllTimersAsync();
+
+    const snapshot = runner.getSnapshot();
+    expect(createDownloadJob).toHaveBeenCalledTimes(2);
+    expect(snapshot.schedulingEnabled).toBe(true);
+    expect(snapshot.rows[0]).toEqual(expect.objectContaining({ status: "success" }));
+    expect(snapshot.rows[1]).toEqual(expect.objectContaining({ status: "success" }));
+  });
+
+  it("retries only row-model eligible terminal rows and never in-flight rows", async () => {
+    const parseResult = parseBatchQueueInput(
+      [
+        "https://www.douyin.com/video/100",
+        "https://www.douyin.com/video/100",
+        "https://www.douyin.com/video/200",
+      ].join("\n"),
+    );
+    const createDownloadJob = vi
+      .fn<BackendClient["createDownloadJob"]>()
+      .mockRejectedValueOnce(new Error("submit failed"))
+      .mockResolvedValueOnce({ jobId: "job-2", status: "pending" })
+      .mockResolvedValueOnce({ jobId: "job-3", status: "pending" });
+    const getJob = vi.fn<BackendClient["getJob"]>().mockResolvedValue(
+      buildJob({
+        status: "success",
+        finishedAt: "2026-05-08T00:12:00Z",
+      }),
+    );
+    const runner = createBatchQueueRunner({
+      backendClient: {
+        createDownloadJob,
+        getJob,
+      } satisfies Pick<BackendClient, "createDownloadJob" | "getJob">,
+      concurrencyLimit: 1,
+    });
+
+    runner.start(parseResult.rows);
+    await vi.runAllTimersAsync();
+
+    const beforeRetry = runner.getSnapshot();
+    expect(beforeRetry.rows[0]).toEqual(expect.objectContaining({ status: "failed", retryEligible: true }));
+    expect(beforeRetry.rows[1]).toEqual(expect.objectContaining({ status: "skipped", retryEligible: false, skipReason: "duplicate" }));
+    expect(beforeRetry.rows[2]).toEqual(expect.objectContaining({ status: "success" }));
+
+    const retriedCount = runner.retryEligibleRows();
+    expect(retriedCount).toBe(1);
+    expect(createDownloadJob).toHaveBeenCalledTimes(3);
+
+    const duringRetry = runner.getSnapshot();
+    expect(duringRetry.rows[0]).toEqual(expect.objectContaining({ status: "running", retryEligible: false }));
+    expect(duringRetry.rows[1]).toEqual(expect.objectContaining({ status: "skipped", retryEligible: false }));
+    expect(duringRetry.rows[2]).toEqual(expect.objectContaining({ status: "success", lastJobId: "job-2" }));
+
+    const retriedAgain = runner.retryEligibleRows();
+    expect(retriedAgain).toBe(0);
+    expect(createDownloadJob).toHaveBeenCalledTimes(3);
+
+    await vi.runAllTimersAsync();
+    const finalSnapshot = runner.getSnapshot();
+    expect(finalSnapshot.rows[0]).toEqual(expect.objectContaining({ status: "success", attempt: 2, lastJobId: "job-3" }));
+    expect(finalSnapshot.totals.failed).toBe(0);
+    expect(finalSnapshot.totals.retryEligible).toBe(0);
+  });
 });

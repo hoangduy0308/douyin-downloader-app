@@ -7,6 +7,9 @@ interface BatchDownloadPanelProps {
   onInputTextChange: (value: string) => void;
   onBuildQueue: () => void;
   onStartQueue: () => void;
+  onPauseQueue: () => void;
+  onResumeQueue: () => void;
+  onRetryQueue: () => void;
   onImportText: () => void;
   queueStatusLabel: string;
   activeRowUrl: string | null;
@@ -16,6 +19,9 @@ interface BatchDownloadPanelProps {
   message: string;
   messageTone: "error" | "hint";
   startDisabled: boolean;
+  pauseDisabled: boolean;
+  resumeDisabled: boolean;
+  retryDisabled: boolean;
 }
 
 export function BatchDownloadPanel({
@@ -23,6 +29,9 @@ export function BatchDownloadPanel({
   onInputTextChange,
   onBuildQueue,
   onStartQueue,
+  onPauseQueue,
+  onResumeQueue,
+  onRetryQueue,
   onImportText,
   queueStatusLabel,
   activeRowUrl,
@@ -32,6 +41,9 @@ export function BatchDownloadPanel({
   message,
   messageTone,
   startDisabled,
+  pauseDisabled,
+  resumeDisabled,
+  retryDisabled,
 }: BatchDownloadPanelProps): JSX.Element {
   return (
     <section className="batch-panel" aria-label="Batch download panel">
@@ -50,6 +62,15 @@ export function BatchDownloadPanel({
           </button>
           <button type="button" onClick={onStartQueue} disabled={startDisabled}>
             Start batch
+          </button>
+          <button type="button" className="secondary" onClick={onPauseQueue} disabled={pauseDisabled}>
+            Pause queue
+          </button>
+          <button type="button" className="secondary" onClick={onResumeQueue} disabled={resumeDisabled}>
+            Resume queue
+          </button>
+          <button type="button" className="secondary" onClick={onRetryQueue} disabled={retryDisabled}>
+            Retry failed
           </button>
           <button type="button" className="secondary" onClick={onImportText}>
             Import URLs

@@ -1,6 +1,6 @@
 import type { BackendClient, JobState } from "./backendClient";
 import type { BatchQueueRow, BatchQueueTotals } from "./batchQueue";
-import { summarizeBatchQueue } from "./batchQueue";
+import { isBatchRowRetryEligible, summarizeBatchQueue } from "./batchQueue";
 
 export const DEFAULT_BATCH_QUEUE_CONCURRENCY_LIMIT = 2;
 export const DEFAULT_BATCH_QUEUE_POLL_INTERVAL_MS = 1000;
@@ -25,6 +25,9 @@ export interface BatchQueueRunnerOptions {
 export interface BatchQueueRunner {
   start: (rows: BatchQueueRow[]) => void;
   stop: () => void;
+  pause: () => void;
+  resume: () => void;
+  retryEligibleRows: () => number;
   setSchedulingEnabled: (enabled: boolean) => void;
   getSnapshot: () => BatchQueueRunnerSnapshot;
 }
@@ -104,6 +107,14 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
       row.normalizedUrl !== null &&
       row.currentJobId === null &&
       !submittingRowIds.has(row.id)
+    );
+  };
+
+  const isRetryEligibleTerminalRow = (row: BatchQueueRow): boolean => {
+    return (
+      isBatchRowRetryEligible(row) &&
+      !submittingRowIds.has(row.id) &&
+      !pollTimers.has(row.id)
     );
   };
 
@@ -247,9 +258,41 @@ export function createBatchQueueRunner(options: BatchQueueRunnerOptions): BatchQ
     }
   };
 
+  const pause = (): void => {
+    setSchedulingEnabled(false);
+  };
+
+  const resume = (): void => {
+    setSchedulingEnabled(true);
+  };
+
+  const retryEligibleRows = (): number => {
+    let retriedCount = 0;
+    for (const row of rows) {
+      if (!isRetryEligibleTerminalRow(row)) {
+        continue;
+      }
+      row.status = "waiting";
+      row.retryEligible = false;
+      row.lastError = null;
+      row.currentJobId = null;
+      retriedCount += 1;
+    }
+
+    emitSnapshot();
+    if (retriedCount > 0 && schedulingEnabled) {
+      void runScheduler();
+    }
+
+    return retriedCount;
+  };
+
   return {
     start,
     stop,
+    pause,
+    resume,
+    retryEligibleRows,
     setSchedulingEnabled,
     getSnapshot,
   };

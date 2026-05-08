@@ -9,7 +9,7 @@ import type { JobState } from "../services/backendClient";
 import { createBackendClient } from "../services/backendClient";
 import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
 import { readImportedBatchText } from "../services/batchImportAdapter";
-import { parseBatchQueueInput, type BatchQueueRow, type BatchQueueTotals } from "../services/batchQueue";
+import { isBatchRowRetryEligible, parseBatchQueueInput, type BatchQueueRow, type BatchQueueTotals } from "../services/batchQueue";
 import { createBatchQueueRunner, type BatchQueueRunnerSnapshot } from "../services/batchQueueRunner";
 import { mapFailedJobError, mapPollingRequestError } from "../services/errorMapper";
 import { createJobPoller } from "../services/jobPolling";
@@ -51,6 +51,7 @@ export function App(): JSX.Element {
   const [batchRows, setBatchRows] = useState<BatchQueueRow[]>([]);
   const [batchTotals, setBatchTotals] = useState<BatchQueueTotals>(EMPTY_BATCH_TOTALS);
   const [batchSchedulingEnabled, setBatchSchedulingEnabled] = useState(true);
+  const [batchInFlightSubmissions, setBatchInFlightSubmissions] = useState(0);
   const [batchStarted, setBatchStarted] = useState(false);
   const [batchMessage, setBatchMessage] = useState("Paste multiline URLs or import a text file, then build the queue.");
   const [batchMessageTone, setBatchMessageTone] = useState<"error" | "hint">("hint");
@@ -62,6 +63,7 @@ export function App(): JSX.Element {
         setBatchRows(snapshot.rows);
         setBatchTotals(snapshot.totals);
         setBatchSchedulingEnabled(snapshot.schedulingEnabled);
+        setBatchInFlightSubmissions(snapshot.inFlightSubmissions);
       },
     });
   }, [backendClient]);
@@ -188,6 +190,8 @@ export function App(): JSX.Element {
   const batchHasRunningRows = batchRows.some((row) => row.status === "running");
   const batchHasWaitingRows = batchRows.some((row) => row.status === "waiting");
   const batchHasTerminalRows = batchRows.some((row) => row.status === "success" || row.status === "failed");
+  const batchHasRetryEligibleRows = batchRows.some((row) => isBatchRowRetryEligible(row));
+  const batchHasInFlightRows = batchHasRunningRows || batchInFlightSubmissions > 0;
   const activeBatchRow = batchRows.find((row) => row.status === "running");
   const batchQueueStatusLabel = useMemo(() => {
     if (!batchStarted) {
@@ -283,6 +287,7 @@ export function App(): JSX.Element {
     batchQueueRunner.stop();
     setBatchStarted(false);
     setBatchSchedulingEnabled(true);
+    setBatchInFlightSubmissions(0);
     const parseResult = parseBatchQueueInput(text);
     setBatchRows(parseResult.rows);
     setBatchTotals(parseResult.totals);
@@ -311,6 +316,34 @@ export function App(): JSX.Element {
     batchQueueRunner.start(batchRows);
     setBatchStarted(true);
     setBatchMessage("Batch queue started.");
+    setBatchMessageTone("hint");
+  };
+
+  const handlePauseBatchQueue = (): void => {
+    batchQueueRunner.pause();
+    setBatchMessage("Queue paused. Active jobs continue polling to terminal state.");
+    setBatchMessageTone("hint");
+  };
+
+  const handleResumeBatchQueue = (): void => {
+    batchQueueRunner.resume();
+    setBatchMessage("Queue resumed for waiting rows.");
+    setBatchMessageTone("hint");
+  };
+
+  const handleRetryBatchQueue = (): void => {
+    const retriedCount = batchQueueRunner.retryEligibleRows();
+    if (retriedCount === 0) {
+      setBatchMessage("No retry-eligible terminal rows are available.");
+      setBatchMessageTone("error");
+      return;
+    }
+    setBatchStarted(true);
+    if (batchSchedulingEnabled) {
+      setBatchMessage(`Retrying ${retriedCount} row${retriedCount === 1 ? "" : "s"}.`);
+    } else {
+      setBatchMessage(`Prepared retry for ${retriedCount} row${retriedCount === 1 ? "" : "s"}. Resume queue to continue.`);
+    }
     setBatchMessageTone("hint");
   };
 
@@ -375,6 +408,9 @@ export function App(): JSX.Element {
                 onInputTextChange={setBatchInputText}
                 onBuildQueue={() => handleBuildBatchQueue(batchInputText)}
                 onStartQueue={handleStartBatchQueue}
+                onPauseQueue={handlePauseBatchQueue}
+                onResumeQueue={handleResumeBatchQueue}
+                onRetryQueue={handleRetryBatchQueue}
                 onImportText={() => {
                   void handleImportBatchText();
                 }}
@@ -386,6 +422,9 @@ export function App(): JSX.Element {
                 message={batchMessage}
                 messageTone={batchMessageTone}
                 startDisabled={submitDisabled || batchTotals.readyToSubmit === 0 || batchHasRunningRows}
+                pauseDisabled={!batchStarted || !batchSchedulingEnabled || !batchHasWaitingRows}
+                resumeDisabled={!batchStarted || batchSchedulingEnabled || !batchHasWaitingRows}
+                retryDisabled={!batchStarted || !batchHasRetryEligibleRows || batchHasInFlightRows}
               />
             )}
           </section>

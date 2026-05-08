@@ -104,6 +104,15 @@ export function summarizeBatchQueue(rows: BatchQueueRow[]): BatchQueueTotals {
   );
 }
 
+export function isBatchRowRetryEligible(row: BatchQueueRow): boolean {
+  return (
+    row.retryEligible &&
+    (row.status === "failed" || row.status === "skipped") &&
+    row.normalizedUrl !== null &&
+    row.currentJobId === null
+  );
+}
+
 function createSkippedRow(
   index: number,
   sourceText: string,

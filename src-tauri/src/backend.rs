@@ -1,15 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
-use std::io::Write;
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const BACKEND_DIAGNOSTICS_CAP: usize = 500;
+const REQUIRED_COOKIE_KEYS: [&str; 4] = ["msToken", "ttwid", "odin_tt", "passport_csrf_token"];
+const COOKIE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BackendDiagnostic {
@@ -134,6 +135,17 @@ pub struct CookieCaptureAndCommitResponse {
     pub diagnostics: Vec<String>,
     pub cookies: Option<BTreeMap<String, String>>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum CookieProcessFailureKind {
+    Timeout,
+    NonZeroExit,
+}
+
+enum CookieProcessWait {
+    Completed(Output),
+    TimedOut(Vec<String>),
 }
 
 #[tauri::command]
@@ -283,8 +295,6 @@ pub fn backend_diagnostics(manager: tauri::State<BackendManager>) -> Result<Vec<
 pub fn cookie_capture_and_commit(
     request: CookieCaptureAndCommitRequest,
 ) -> Result<CookieCaptureAndCommitResponse, String> {
-    const REQUIRED_COOKIE_KEYS: [&str; 4] = ["msToken", "ttwid", "odin_tt", "passport_csrf_token"];
-
     let backend_root = PathBuf::from(request.backend_root.trim());
     if !backend_root.is_absolute() {
         return Ok(CookieCaptureAndCommitResponse {
@@ -357,7 +367,7 @@ pub fn cookie_capture_and_commit(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = match command.spawn() {
+    let child = match command.spawn() {
         Ok(spawned) => spawned,
         Err(error) => {
             return Ok(CookieCaptureAndCommitResponse {
@@ -370,43 +380,27 @@ pub fn cookie_capture_and_commit(
         }
     };
 
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(error) = writeln!(stdin) {
-            return Ok(CookieCaptureAndCommitResponse {
-                status: "failed".to_owned(),
-                exit_code: None,
-                diagnostics: Vec::new(),
-                cookies: None,
-                error: Some(format!("Failed to confirm cookie capture from app boundary: {}", error)),
-            });
+    let (output, mut diagnostics) = match wait_for_cookie_process(child, COOKIE_CAPTURE_TIMEOUT)? {
+        CookieProcessWait::Completed(output) => {
+            let diagnostics = diagnostics_from_process_output(&output);
+            (output, diagnostics)
         }
-    }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("Failed while waiting for cookie fetcher process: {}", error))?;
-
-    let mut diagnostics = Vec::new();
-    diagnostics.extend(
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(|line| format!("stdout: {}", line)),
-    );
-    diagnostics.extend(
-        String::from_utf8_lossy(&output.stderr)
-            .lines()
-            .map(|line| format!("stderr: {}", line)),
-    );
+        CookieProcessWait::TimedOut(diagnostics) => {
+            return Ok(build_cookie_process_failure_response(
+                CookieProcessFailureKind::Timeout,
+                None,
+                diagnostics,
+            ));
+        }
+    };
 
     let exit_code = output.status.code();
     if !output.status.success() {
-        return Ok(CookieCaptureAndCommitResponse {
-            status: "failed".to_owned(),
+        return Ok(build_cookie_process_failure_response(
+            CookieProcessFailureKind::NonZeroExit,
             exit_code,
             diagnostics,
-            cookies: None,
-            error: Some("Cookie fetcher exited with a non-zero status.".to_owned()),
-        });
+        ));
     }
 
     let raw = match fs::read_to_string(&output_path) {
@@ -463,11 +457,7 @@ pub fn cookie_capture_and_commit(
         }
     }
 
-    let missing: Vec<&str> = REQUIRED_COOKIE_KEYS
-        .iter()
-        .copied()
-        .filter(|key| !cookies.contains_key(*key))
-        .collect();
+    let missing = missing_required_cookie_keys(&cookies);
     if !missing.is_empty() {
         diagnostics.push(format!("Missing required cookie keys: {}", missing.join(", ")));
         return Ok(CookieCaptureAndCommitResponse {
@@ -479,58 +469,7 @@ pub fn cookie_capture_and_commit(
         });
     }
 
-    let existing_yaml = if managed_config_path.exists() {
-        fs::read_to_string(&managed_config_path).map_err(|error| {
-            format!(
-                "Failed to read managed config '{}': {}",
-                managed_config_path.display(),
-                error
-            )
-        })?
-    } else {
-        String::new()
-    };
-
-    let mut config_value: serde_yaml::Value = if existing_yaml.trim().is_empty() {
-        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
-    } else {
-        serde_yaml::from_str(&existing_yaml).map_err(|error| {
-            format!(
-                "Managed config is invalid YAML '{}': {}",
-                managed_config_path.display(),
-                error
-            )
-        })?
-    };
-
-    if !config_value.is_mapping() {
-        config_value = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
-    }
-
-    let mapping = config_value
-        .as_mapping_mut()
-        .expect("value should be mapping after normalization");
-    let mut cookie_mapping = serde_yaml::Mapping::new();
-    for (key, value) in &cookies {
-        cookie_mapping.insert(
-            serde_yaml::Value::String(key.to_owned()),
-            serde_yaml::Value::String(value.to_owned()),
-        );
-    }
-    mapping.insert(
-        serde_yaml::Value::String("cookies".to_owned()),
-        serde_yaml::Value::Mapping(cookie_mapping),
-    );
-
-    let yaml_text = serde_yaml::to_string(&config_value)
-        .map_err(|error| format!("Failed to serialize managed config cookies: {}", error))?;
-    write_file_atomic(&managed_config_path, &yaml_text, "managed-config").map_err(|error| {
-        format!(
-            "Failed to commit managed cookie config '{}': {}",
-            managed_config_path.display(),
-            error
-        )
-    })?;
+    commit_cookies_to_managed_config(&managed_config_path, &cookies)?;
 
     Ok(CookieCaptureAndCommitResponse {
         status: "success".to_owned(),
@@ -602,6 +541,18 @@ pub fn settings_write_config_atomic(request: SettingsWriteConfigAtomicRequest) -
 }
 
 fn write_file_atomic(target_path: &Path, contents: &str, temp_label: &str) -> Result<(), String> {
+    write_file_atomic_with_commit(target_path, contents, temp_label, |from, to| fs::rename(from, to))
+}
+
+fn write_file_atomic_with_commit<F>(
+    target_path: &Path,
+    contents: &str,
+    temp_label: &str,
+    mut commit: F,
+) -> Result<(), String>
+where
+    F: FnMut(&Path, &Path) -> io::Result<()>,
+{
     let parent = target_path.parent().ok_or_else(|| {
         format!(
             "Target file must have a parent directory: {}",
@@ -620,7 +571,9 @@ fn write_file_atomic(target_path: &Path, contents: &str, temp_label: &str) -> Re
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
+    let pid = std::process::id();
     let temp_path = parent.join(format!(".{}-{}-{}.tmp", temp_label, std::process::id(), nonce));
+    let backup_path = parent.join(format!(".{}-{}-{}.bak", temp_label, pid, nonce));
 
     fs::write(&temp_path, contents.as_bytes()).map_err(|error| {
         format!(
@@ -630,8 +583,9 @@ fn write_file_atomic(target_path: &Path, contents: &str, temp_label: &str) -> Re
         )
     })?;
 
-    if target_path.exists() {
-        fs::remove_file(target_path).map_err(|error| {
+    let had_existing_target = target_path.exists();
+    if had_existing_target {
+        fs::rename(target_path, &backup_path).map_err(|error| {
             format!(
                 "Failed to replace existing file '{}': {}",
                 target_path.display(),
@@ -640,14 +594,190 @@ fn write_file_atomic(target_path: &Path, contents: &str, temp_label: &str) -> Re
         })?;
     }
 
-    fs::rename(&temp_path, target_path).map_err(|error| {
-        format!(
+    if let Err(error) = commit(&temp_path, target_path) {
+        let _ = fs::remove_file(&temp_path);
+        if had_existing_target && backup_path.exists() {
+            if let Err(restore_error) = fs::rename(&backup_path, target_path) {
+                return Err(format!(
+                    "Failed to commit file '{}': {}; restore failed for '{}': {}",
+                    target_path.display(),
+                    error,
+                    target_path.display(),
+                    restore_error
+                ));
+            }
+        }
+        return Err(format!(
             "Failed to commit file '{}': {}",
             target_path.display(),
             error
-        )
-    })?;
+        ));
+    }
+
+    if had_existing_target {
+        fs::remove_file(&backup_path).map_err(|error| {
+            format!(
+                "Failed to clean backup file '{}' after commit: {}",
+                backup_path.display(),
+                error
+            )
+        })?;
+    }
     Ok(())
+}
+
+fn commit_cookies_to_managed_config(
+    managed_config_path: &Path,
+    cookies: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let existing_yaml = if managed_config_path.exists() {
+        fs::read_to_string(managed_config_path).map_err(|error| {
+            format!(
+                "Failed to read managed config '{}': {}",
+                managed_config_path.display(),
+                error
+            )
+        })?
+    } else {
+        String::new()
+    };
+
+    let mut config_value: serde_yaml::Value = if existing_yaml.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&existing_yaml).map_err(|error| {
+            format!(
+                "Managed config is invalid YAML '{}': {}",
+                managed_config_path.display(),
+                error
+            )
+        })?
+    };
+
+    if !config_value.is_mapping() {
+        config_value = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+
+    let mapping = config_value
+        .as_mapping_mut()
+        .expect("value should be mapping after normalization");
+    let mut cookie_mapping = serde_yaml::Mapping::new();
+    for (key, value) in cookies {
+        cookie_mapping.insert(
+            serde_yaml::Value::String(key.to_owned()),
+            serde_yaml::Value::String(value.to_owned()),
+        );
+    }
+    mapping.insert(
+        serde_yaml::Value::String("cookies".to_owned()),
+        serde_yaml::Value::Mapping(cookie_mapping),
+    );
+
+    let yaml_text = serde_yaml::to_string(&config_value)
+        .map_err(|error| format!("Failed to serialize managed config cookies: {}", error))?;
+    write_file_atomic(managed_config_path, &yaml_text, "managed-config").map_err(|error| {
+        format!(
+            "Failed to commit managed cookie config '{}': {}",
+            managed_config_path.display(),
+            error
+        )
+    })
+}
+
+fn wait_for_cookie_process(mut child: Child, timeout: Duration) -> Result<CookieProcessWait, String> {
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|error| format!("Failed while waiting for cookie fetcher process: {}", error))?;
+                return Ok(CookieProcessWait::Completed(output));
+            }
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let output = child.wait_with_output().map_err(|error| {
+                        format!("Failed while collecting timed-out cookie fetcher output: {}", error)
+                    })?;
+                    let mut diagnostics = diagnostics_from_process_output(&output);
+                    diagnostics.push(format!(
+                        "Cookie capture timed out after {} seconds and was cancelled.",
+                        timeout.as_secs()
+                    ));
+                    return Ok(CookieProcessWait::TimedOut(diagnostics));
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Failed while polling cookie fetcher process status: {}",
+                    error
+                ));
+            }
+        }
+    }
+}
+
+fn diagnostics_from_process_output(output: &Output) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    diagnostics.extend(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| format!("stdout: {}", line)),
+    );
+    diagnostics.extend(
+        String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .map(|line| format!("stderr: {}", line)),
+    );
+    diagnostics
+}
+
+fn build_cookie_process_failure_response(
+    kind: CookieProcessFailureKind,
+    exit_code: Option<i32>,
+    mut diagnostics: Vec<String>,
+) -> CookieCaptureAndCommitResponse {
+    match kind {
+        CookieProcessFailureKind::Timeout => {
+            if !diagnostics
+                .iter()
+                .any(|entry| entry.to_ascii_lowercase().contains("timed out"))
+            {
+                diagnostics.push("Cookie capture timed out and was cancelled.".to_owned());
+            }
+            CookieCaptureAndCommitResponse {
+                status: "cancelled".to_owned(),
+                exit_code,
+                diagnostics,
+                cookies: None,
+                error: Some("Cookie capture timed out before completion.".to_owned()),
+            }
+        }
+        CookieProcessFailureKind::NonZeroExit if exit_code == Some(130) => CookieCaptureAndCommitResponse {
+            status: "cancelled".to_owned(),
+            exit_code,
+            diagnostics,
+            cookies: None,
+            error: Some("Cookie capture was cancelled before completion.".to_owned()),
+        },
+        CookieProcessFailureKind::NonZeroExit => CookieCaptureAndCommitResponse {
+            status: "failed".to_owned(),
+            exit_code,
+            diagnostics,
+            cookies: None,
+            error: Some("Cookie fetcher exited with a non-zero status.".to_owned()),
+        },
+    }
+}
+
+fn missing_required_cookie_keys(cookies: &BTreeMap<String, String>) -> Vec<&'static str> {
+    REQUIRED_COOKIE_KEYS
+        .iter()
+        .copied()
+        .filter(|key| !cookies.contains_key(*key))
+        .collect()
 }
 
 fn read_stream_lines<R: std::io::Read>(
@@ -688,7 +818,17 @@ fn push_bounded_diagnostic(diagnostics: &mut Vec<BackendDiagnostic>, entry: Back
 
 #[cfg(test)]
 mod tests {
-    use super::{push_bounded_diagnostic, BackendDiagnostic, BACKEND_DIAGNOSTICS_CAP};
+    use super::{
+        build_cookie_process_failure_response, commit_cookies_to_managed_config,
+        missing_required_cookie_keys, push_bounded_diagnostic, settings_write_config_atomic,
+        write_file_atomic_with_commit, BackendDiagnostic, CookieProcessFailureKind,
+        SettingsWriteConfigAtomicRequest, BACKEND_DIAGNOSTICS_CAP,
+    };
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::io;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn keeps_only_latest_backend_diagnostics_with_cap() {
@@ -711,5 +851,179 @@ mod tests {
             diagnostics.last().map(|item| item.message.as_str()),
             Some("line-504")
         );
+    }
+
+    #[test]
+    fn marks_timeout_cookie_fetch_as_cancelled() {
+        let response = build_cookie_process_failure_response(
+            CookieProcessFailureKind::Timeout,
+            None,
+            vec!["stdout: waiting".to_owned()],
+        );
+
+        assert_eq!(response.status, "cancelled");
+        assert_eq!(response.exit_code, None);
+        assert!(
+            response
+                .diagnostics
+                .iter()
+                .any(|entry| entry.contains("timed out"))
+        );
+    }
+
+    #[test]
+    fn marks_exit_code_130_cookie_fetch_as_cancelled() {
+        let response = build_cookie_process_failure_response(
+            CookieProcessFailureKind::NonZeroExit,
+            Some(130),
+            vec!["stderr: user interrupted".to_owned()],
+        );
+
+        assert_eq!(response.status, "cancelled");
+        assert_eq!(response.exit_code, Some(130));
+        assert_eq!(
+            response.error.as_deref(),
+            Some("Cookie capture was cancelled before completion.")
+        );
+    }
+
+    #[test]
+    fn marks_other_non_zero_cookie_fetch_as_failed() {
+        let response = build_cookie_process_failure_response(
+            CookieProcessFailureKind::NonZeroExit,
+            Some(1),
+            vec!["stderr: crash".to_owned()],
+        );
+
+        assert_eq!(response.status, "failed");
+        assert_eq!(response.exit_code, Some(1));
+        assert_eq!(
+            response.error.as_deref(),
+            Some("Cookie fetcher exited with a non-zero status.")
+        );
+    }
+
+    #[test]
+    fn reports_missing_required_cookie_keys() {
+        let mut cookies = BTreeMap::new();
+        cookies.insert("msToken".to_owned(), "a".to_owned());
+        cookies.insert("ttwid".to_owned(), "b".to_owned());
+
+        let missing = missing_required_cookie_keys(&cookies);
+        assert_eq!(missing, vec!["odin_tt", "passport_csrf_token"]);
+    }
+
+    #[test]
+    fn accepts_cookie_map_when_all_required_keys_exist() {
+        let mut cookies = BTreeMap::new();
+        cookies.insert("msToken".to_owned(), "a".to_owned());
+        cookies.insert("ttwid".to_owned(), "b".to_owned());
+        cookies.insert("odin_tt".to_owned(), "c".to_owned());
+        cookies.insert("passport_csrf_token".to_owned(), "d".to_owned());
+
+        let missing = missing_required_cookie_keys(&cookies);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn settings_write_config_atomic_replaces_existing_file() {
+        let root = create_test_directory("settings_write_config_atomic_replaces_existing_file");
+        let target = root.join("managed-config.yml");
+        fs::write(&target, "old: true\n").expect("seed managed config");
+
+        let result = settings_write_config_atomic(SettingsWriteConfigAtomicRequest {
+            path: target.display().to_string(),
+            contents: "new: value\n".to_owned(),
+        });
+
+        assert!(result.is_ok());
+        assert_eq!(
+            fs::read_to_string(&target).expect("read committed config"),
+            "new: value\n"
+        );
+        assert_no_managed_config_temp_files(&root);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cookie_commit_preserves_existing_fields_and_writes_cookies() {
+        let root = create_test_directory("cookie_commit_preserves_existing_fields_and_writes_cookies");
+        let target = root.join("managed-config.yml");
+        fs::write(&target, "output:\n  path: C:/downloads\n").expect("seed managed config");
+
+        let mut cookies = BTreeMap::new();
+        cookies.insert("msToken".to_owned(), "token-a".to_owned());
+        cookies.insert("ttwid".to_owned(), "token-b".to_owned());
+        cookies.insert("odin_tt".to_owned(), "token-c".to_owned());
+        cookies.insert("passport_csrf_token".to_owned(), "token-d".to_owned());
+
+        let result = commit_cookies_to_managed_config(&target, &cookies);
+
+        assert!(result.is_ok());
+        let value: serde_yaml::Value =
+            serde_yaml::from_str(&fs::read_to_string(&target).expect("read committed config"))
+                .expect("parse managed config");
+        let output_path = value
+            .get("output")
+            .and_then(|item| item.get("path"))
+            .and_then(serde_yaml::Value::as_str);
+        assert_eq!(output_path, Some("C:/downloads"));
+        let stored_cookie = value
+            .get("cookies")
+            .and_then(|item| item.get("msToken"))
+            .and_then(serde_yaml::Value::as_str);
+        assert_eq!(stored_cookie, Some("token-a"));
+        assert_no_managed_config_temp_files(&root);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_atomic_commit_restores_previous_file_and_cleans_temp_files() {
+        let root = create_test_directory("failed_atomic_commit_restores_previous_file_and_cleans_temp_files");
+        let target = root.join("managed-config.yml");
+        fs::write(&target, "original: true\n").expect("seed managed config");
+
+        let result = write_file_atomic_with_commit(&target, "new: value\n", "managed-config", |_, _| {
+            Err(io::Error::other("simulated commit failure"))
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(&target).expect("read restored config"),
+            "original: true\n"
+        );
+        assert_no_managed_config_temp_files(&root);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn create_test_directory(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let directory = std::env::temp_dir().join(format!(
+            "douyin-downloader-app-{}-{}-{}",
+            name,
+            std::process::id(),
+            nonce
+        ));
+        fs::create_dir_all(&directory).expect("create test directory");
+        directory
+    }
+
+    fn assert_no_managed_config_temp_files(directory: &Path) {
+        let managed_prefix = ".managed-config-";
+        let entries = fs::read_dir(directory).expect("read directory");
+        for entry in entries {
+            let path = entry.expect("entry").path();
+            if let Some(name) = path.file_name().and_then(|file_name| file_name.to_str()) {
+                assert!(
+                    !(name.starts_with(managed_prefix)
+                        && (name.ends_with(".tmp") || name.ends_with(".bak"))),
+                    "unexpected managed-config artifact left behind: {}",
+                    path.display()
+                );
+            }
+        }
     }
 }

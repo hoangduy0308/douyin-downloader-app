@@ -150,12 +150,12 @@ pub struct CookieCaptureAndCommitResponse {
     pub status: String,
     pub exit_code: Option<i32>,
     pub diagnostics: Vec<String>,
-    pub cookies: Option<BTreeMap<String, String>>,
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum CookieProcessFailureKind {
+    MissingRuntime,
     Timeout,
     NonZeroExit,
 }
@@ -498,12 +498,19 @@ pub fn cookie_capture_and_commit(
     let mut child = match command.spawn() {
         Ok(spawned) => spawned,
         Err(error) => {
+            let detail = format!("Failed to start cookie fetcher process: {}", error);
+            if error_message_indicates_missing_runtime(&detail) {
+                return Ok(build_cookie_process_failure_response(
+                    CookieProcessFailureKind::MissingRuntime,
+                    None,
+                    vec![detail],
+                ));
+            }
             return Ok(CookieCaptureAndCommitResponse {
                 status: "failed".to_owned(),
                 exit_code: None,
-                diagnostics: Vec::new(),
-                cookies: None,
-                error: Some(format!("Failed to start cookie fetcher process: {}", error)),
+                diagnostics: vec![detail.clone()],
+                error: Some(detail),
             });
         }
     };
@@ -545,7 +552,6 @@ pub fn cookie_capture_and_commit(
                 status: "failed".to_owned(),
                 exit_code,
                 diagnostics,
-                cookies: None,
                 error: Some(format!(
                     "Cookie output file was not created or readable '{}': {}",
                     output_path.display(),
@@ -562,7 +568,6 @@ pub fn cookie_capture_and_commit(
                 status: "failed".to_owned(),
                 exit_code,
                 diagnostics,
-                cookies: None,
                 error: Some(error),
             });
         }
@@ -575,7 +580,6 @@ pub fn cookie_capture_and_commit(
             status: "failed".to_owned(),
             exit_code,
             diagnostics,
-            cookies: Some(cookies),
             error: Some("Cookie capture completed with missing required keys.".to_owned()),
         });
     }
@@ -586,7 +590,6 @@ pub fn cookie_capture_and_commit(
         status: "success".to_owned(),
         exit_code,
         diagnostics,
-        cookies: Some(cookies),
         error: None,
     })
 }
@@ -919,6 +922,15 @@ fn build_cookie_process_failure_response(
     mut diagnostics: Vec<String>,
 ) -> CookieCaptureAndCommitResponse {
     match kind {
+        CookieProcessFailureKind::MissingRuntime => CookieCaptureAndCommitResponse {
+            status: "missing-runtime".to_owned(),
+            exit_code,
+            diagnostics,
+            error: Some(
+                "Automatic cookie recovery runtime dependencies are unavailable on this machine."
+                    .to_owned(),
+            ),
+        },
         CookieProcessFailureKind::Timeout => {
             if !diagnostics
                 .iter()
@@ -930,7 +942,6 @@ fn build_cookie_process_failure_response(
                 status: "cancelled".to_owned(),
                 exit_code,
                 diagnostics,
-                cookies: None,
                 error: Some("Cookie capture timed out before completion.".to_owned()),
             }
         }
@@ -938,17 +949,40 @@ fn build_cookie_process_failure_response(
             status: "cancelled".to_owned(),
             exit_code,
             diagnostics,
-            cookies: None,
             error: Some("Cookie capture was cancelled before completion.".to_owned()),
         },
+        CookieProcessFailureKind::NonZeroExit if diagnostics_indicate_missing_runtime(&diagnostics) => {
+            build_cookie_process_failure_response(
+                CookieProcessFailureKind::MissingRuntime,
+                exit_code,
+                diagnostics,
+            )
+        }
         CookieProcessFailureKind::NonZeroExit => CookieCaptureAndCommitResponse {
             status: "failed".to_owned(),
             exit_code,
             diagnostics,
-            cookies: None,
             error: Some("Cookie fetcher exited with a non-zero status.".to_owned()),
         },
     }
+}
+
+fn diagnostics_indicate_missing_runtime(diagnostics: &[String]) -> bool {
+    diagnostics
+        .iter()
+        .any(|entry| error_message_indicates_missing_runtime(entry))
+}
+
+fn error_message_indicates_missing_runtime(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    lowered.contains("executable doesn't exist")
+        || lowered.contains("browsertype.launch: executable")
+        || lowered.contains("no module named playwright")
+        || lowered.contains("cannot find module 'playwright'")
+        || lowered.contains("cannot find module \"playwright\"")
+        || (lowered.contains("module not found") && lowered.contains("playwright"))
+        || lowered.contains("cannot find the file specified")
+        || lowered.contains("is not recognized as an internal or external command")
 }
 
 fn missing_required_cookie_keys(cookies: &BTreeMap<String, String>) -> Vec<&'static str> {
@@ -999,10 +1033,12 @@ fn push_bounded_diagnostic(diagnostics: &mut Vec<BackendDiagnostic>, entry: Back
 mod tests {
     use super::{
         build_cookie_process_failure_response, commit_cookies_to_managed_config,
-        missing_required_cookie_keys, parse_cookie_capture_json_map, push_bounded_diagnostic,
+        error_message_indicates_missing_runtime, missing_required_cookie_keys,
+        parse_cookie_capture_json_map, push_bounded_diagnostic,
         resolve_allowed_runtime_state_file_name, resolve_cookie_capture_output_path,
         resolve_sidecar_executable_from_roots, write_managed_config_atomic,
-        write_file_atomic_with_commit, BackendDiagnostic, CookieProcessFailureKind,
+        write_file_atomic_with_commit, BackendDiagnostic, CookieCaptureAndCommitResponse,
+        CookieProcessFailureKind,
         BACKEND_DIAGNOSTICS_CAP, HISTORY_RUNTIME_FILE_NAME, OUTPUT_PATH_RUNTIME_FILE_NAME,
     };
     use std::collections::BTreeMap;
@@ -1081,6 +1117,86 @@ mod tests {
         assert_eq!(
             response.error.as_deref(),
             Some("Cookie fetcher exited with a non-zero status.")
+        );
+    }
+
+    #[test]
+    fn marks_missing_runtime_diagnostics_as_missing_runtime() {
+        let response = build_cookie_process_failure_response(
+            CookieProcessFailureKind::NonZeroExit,
+            Some(1),
+            vec!["Traceback: BrowserType.launch: Executable doesn't exist".to_owned()],
+        );
+
+        assert_eq!(response.status, "missing-runtime");
+        assert_eq!(response.exit_code, Some(1));
+        assert_eq!(
+            response.error.as_deref(),
+            Some(
+                "Automatic cookie recovery runtime dependencies are unavailable on this machine."
+            )
+        );
+    }
+
+    #[test]
+    fn keeps_ambiguous_playwright_diagnostics_as_failed() {
+        let response = build_cookie_process_failure_response(
+            CookieProcessFailureKind::NonZeroExit,
+            Some(1),
+            vec!["Playwright login flow rejected current session token.".to_owned()],
+        );
+
+        assert_eq!(response.status, "failed");
+        assert_eq!(response.exit_code, Some(1));
+        assert_eq!(
+            response.error.as_deref(),
+            Some("Cookie fetcher exited with a non-zero status.")
+        );
+    }
+
+    #[test]
+    fn keeps_unrelated_module_not_found_diagnostics_as_failed() {
+        let response = build_cookie_process_failure_response(
+            CookieProcessFailureKind::NonZeroExit,
+            Some(1),
+            vec!["Runtime error: module not found: session-refresh-helper".to_owned()],
+        );
+
+        assert_eq!(response.status, "failed");
+        assert_eq!(response.exit_code, Some(1));
+        assert_eq!(
+            response.error.as_deref(),
+            Some("Cookie fetcher exited with a non-zero status.")
+        );
+    }
+
+    #[test]
+    fn marks_spawn_failure_missing_module_signature_as_missing_runtime() {
+        let spawn_failure_detail =
+            "Failed to start cookie fetcher process: No module named playwright".to_owned();
+
+        let response = if error_message_indicates_missing_runtime(&spawn_failure_detail) {
+            build_cookie_process_failure_response(
+                CookieProcessFailureKind::MissingRuntime,
+                None,
+                vec![spawn_failure_detail],
+            )
+        } else {
+            CookieCaptureAndCommitResponse {
+                status: "failed".to_owned(),
+                exit_code: None,
+                diagnostics: vec![spawn_failure_detail.clone()],
+                error: Some(spawn_failure_detail),
+            }
+        };
+
+        assert_eq!(response.status, "missing-runtime");
+        assert_eq!(response.exit_code, None);
+        assert_eq!(
+            response.error.as_deref(),
+            Some(
+                "Automatic cookie recovery runtime dependencies are unavailable on this machine."
+            )
         );
     }
 

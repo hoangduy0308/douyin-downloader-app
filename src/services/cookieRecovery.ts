@@ -1,12 +1,5 @@
 import { captureAndCommitCookies } from "./tauriBackendRuntime";
 
-export const REQUIRED_COOKIE_KEYS = [
-  "msToken",
-  "ttwid",
-  "odin_tt",
-  "passport_csrf_token",
-] as const;
-
 export type CookieRecoveryStatus = "success" | "cancelled" | "missing-runtime" | "failed";
 
 export interface CookieRecoveryCommandRequest {
@@ -17,7 +10,6 @@ export interface CookieRecoveryCommandResult {
   status: CookieRecoveryStatus;
   exitCode: number | null;
   diagnostics: string[];
-  cookies?: Record<string, string> | null;
   error?: string | null;
 }
 
@@ -29,8 +21,20 @@ export interface CookieRecoveryResult {
   status: CookieRecoveryStatus;
   primaryMessage: string;
   diagnostics: string[];
-  cookies: Record<string, string>;
 }
+
+/**
+ * Cross-layer contract with the native `cookie_capture_and_commit` command:
+ * Rust emits one of success|cancelled|missing-runtime|failed, and renderer
+ * maps each status to a fixed actionable message without exposing cookie values.
+ */
+const COOKIE_RECOVERY_PRIMARY_MESSAGES: Record<CookieRecoveryStatus, string> = {
+  "missing-runtime":
+    "Automatic cookie recovery is unavailable on this machine. Use manual/import cookies and retry.",
+  cancelled: "Cookie recovery was canceled. Existing cookies were unchanged.",
+  failed: "Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback.",
+  success: "Cookies were refreshed. Retry the failed download now.",
+};
 
 export class TauriCookieRecoveryGateway implements CookieRecoveryGateway {
   public async captureAndCommit(
@@ -47,68 +51,46 @@ export class CookieRecoveryService {
     request: CookieRecoveryCommandRequest,
   ): Promise<CookieRecoveryResult> {
     const result = await this.gateway.captureAndCommit(request);
-    const diagnostics = [...result.diagnostics];
+    if (result.status === "success") {
+      return {
+        status: "success",
+        primaryMessage: COOKIE_RECOVERY_PRIMARY_MESSAGES.success,
+        diagnostics: [...result.diagnostics],
+      };
+    }
 
     if (result.status === "missing-runtime") {
       return {
         status: "missing-runtime",
-        primaryMessage:
-          "Automatic cookie recovery is unavailable on this machine. Use manual/import cookies and retry.",
-        diagnostics,
-        cookies: {},
+        primaryMessage: COOKIE_RECOVERY_PRIMARY_MESSAGES["missing-runtime"],
+        diagnostics: [...result.diagnostics],
       };
     }
 
     if (result.status === "cancelled") {
       return {
         status: "cancelled",
-        primaryMessage: "Cookie recovery was canceled. Existing cookies were unchanged.",
-        diagnostics,
-        cookies: {},
+        primaryMessage: COOKIE_RECOVERY_PRIMARY_MESSAGES.cancelled,
+        diagnostics: [...result.diagnostics],
       };
     }
 
     if (result.status === "failed") {
       return {
         status: "failed",
-        primaryMessage:
-          "Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback.",
-        diagnostics,
-        cookies: {},
-      };
-    }
-
-    const cookies = sanitizeCookies(result.cookies ?? {});
-    const missingKeys = REQUIRED_COOKIE_KEYS.filter((key) => !cookies[key]);
-    if (missingKeys.length > 0) {
-      diagnostics.push(`Missing required cookie keys: ${missingKeys.join(", ")}`);
-      return {
-        status: "failed",
-        primaryMessage:
-          "Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback.",
-        diagnostics,
-        cookies: {},
+        primaryMessage: COOKIE_RECOVERY_PRIMARY_MESSAGES.failed,
+        diagnostics: [...result.diagnostics],
       };
     }
 
     return {
-      status: "success",
-      primaryMessage: "Cookies were refreshed. Retry the failed download now.",
-      diagnostics,
-      cookies,
+      status: "failed",
+      primaryMessage:
+        "Cookie recovery returned an unexpected status. Check Logs and use manual/import fallback.",
+      diagnostics: [
+        ...result.diagnostics,
+        `Cookie recovery contract mismatch: unexpected status '${String(result.status)}'.`,
+      ],
     };
   }
-}
-
-function sanitizeCookies(input: Record<string, string>): Record<string, string> {
-  const cleaned: Record<string, string> = {};
-  for (const [key, value] of Object.entries(input)) {
-    const trimmedKey = key.trim();
-    const trimmedValue = value.trim();
-    if (!trimmedKey || !trimmedValue) {
-      continue;
-    }
-    cleaned[trimmedKey] = trimmedValue;
-  }
-  return cleaned;
 }

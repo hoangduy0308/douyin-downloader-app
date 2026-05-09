@@ -26,12 +26,6 @@ describe("CookieRecoveryService", () => {
       status: "success",
       exitCode: 0,
       diagnostics: ["stdout: [INFO] Saved cookies"],
-      cookies: {
-        msToken: "ms-token",
-        ttwid: "ttwid-token",
-        odin_tt: "odin-token",
-        passport_csrf_token: "csrf-token",
-      },
     });
     const service = new CookieRecoveryService(gateway);
 
@@ -41,6 +35,7 @@ describe("CookieRecoveryService", () => {
     expect(result.status).toBe("success");
     expect(result.primaryMessage).toBe("Cookies were refreshed. Retry the failed download now.");
     expect(result.diagnostics).toEqual(["stdout: [INFO] Saved cookies"]);
+    expect(Object.prototype.hasOwnProperty.call(result, "cookies")).toBe(false);
   });
 
   it("maps canceled capture to a non-destructive user action", async () => {
@@ -77,24 +72,27 @@ describe("CookieRecoveryService", () => {
     expect(result.diagnostics).toEqual(["Playwright is not installed"]);
   });
 
-  it("rejects zero-exit captures when required cookie keys are missing", async () => {
-    const gateway = new FakeCookieRecoveryGateway({
-      status: "success",
-      exitCode: 0,
-      diagnostics: ["[WARN] Missing required cookie keys: ttwid"],
-      cookies: {
-        msToken: "ms-token",
-        odin_tt: "odin-token",
-        passport_csrf_token: "csrf-token",
-      },
-    });
+  it("does not expose cookie values to renderer-facing result payloads", async () => {
+    const gateway = new FakeCookieRecoveryGateway(
+      {
+        status: "success",
+        exitCode: 0,
+        diagnostics: ["stdout: [INFO] Saved cookies"],
+        cookies: {
+          msToken: "ms-token",
+          ttwid: "ttwid-token",
+          odin_tt: "odin-token",
+          passport_csrf_token: "csrf-token",
+        },
+      } as unknown as CookieRecoveryCommandResult,
+    );
     const service = new CookieRecoveryService(gateway);
 
     const result = await service.captureAndCommit(baseRequest);
 
-    expect(result.status).toBe("failed");
-    expect(result.primaryMessage).toBe("Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback.");
-    expect(result.diagnostics.join("\n")).toContain("Missing required cookie keys: ttwid");
+    expect(result.status).toBe("success");
+    expect(result.primaryMessage).toBe("Cookies were refreshed. Retry the failed download now.");
+    expect(Object.prototype.hasOwnProperty.call(result, "cookies")).toBe(false);
   });
 
   it("keeps raw process errors in diagnostics instead of the primary message", async () => {
@@ -112,5 +110,27 @@ describe("CookieRecoveryService", () => {
     expect(result.primaryMessage).toBe("Could not refresh Douyin cookies. Check Logs for details and use manual/import fallback.");
     expect(result.primaryMessage).not.toContain("BrowserType.launch");
     expect(result.diagnostics[0]).toContain("BrowserType.launch");
+  });
+
+  it("treats unexpected backend statuses as failed contract drift", async () => {
+    const gateway = new FakeCookieRecoveryGateway(
+      {
+        status: "unexpected-status",
+        exitCode: 0,
+        diagnostics: ["stdout: cookie output parsed but status was unexpected"],
+      } as unknown as CookieRecoveryCommandResult,
+    );
+    const service = new CookieRecoveryService(gateway);
+
+    const result = await service.captureAndCommit(baseRequest);
+
+    expect(result.status).toBe("failed");
+    expect(result.primaryMessage).toBe(
+      "Cookie recovery returned an unexpected status. Check Logs and use manual/import fallback.",
+    );
+    expect(result.diagnostics).toContain("stdout: cookie output parsed but status was unexpected");
+    expect(result.diagnostics).toContain(
+      "Cookie recovery contract mismatch: unexpected status 'unexpected-status'.",
+    );
   });
 });

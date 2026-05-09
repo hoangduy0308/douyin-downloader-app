@@ -1,0 +1,135 @@
+
+> douyin-downloader-app@0.1.0 test
+> vitest run
+
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mF:/Work/DouyinDownload/douyin-downloader-app[39m
+
+ [32m✓[39m src/tests/backend-lifecycle.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+ [32m✓[39m src/tests/backend-client.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 12[2mms[22m[39m
+ [32m✓[39m src/tests/settings-store.test.ts [2m([22m[2m7 tests[22m[2m)[22m[90m 12[2mms[22m[39m
+ [32m✓[39m src/tests/batch-queue.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 20[2mms[22m[39m
+ [32m✓[39m src/tests/job-polling.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 13[2mms[22m[39m
+ [32m✓[39m src/tests/history-store.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 15[2mms[22m[39m
+ [32m✓[39m src/tests/cookie-recovery-contract.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+ [32m✓[39m src/tests/cookie-recovery.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+ [32m✓[39m src/tests/batch-import-adapter.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 29[2mms[22m[39m
+ [32m✓[39m src/tests/batch-queue-runner.test.ts [2m([22m[2m11 tests[22m[2m)[22m[90m 39[2mms[22m[39m
+[90mstderr[2m | src/tests/app-shell.test.tsx[2m > [22m[2mApp shell[2m > [22m[2mrenders first-screen workflow controls with single and batch tabs
+[22m[39mWarning: An update to App inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at App (F:\Work\DouyinDownload\douyin-downloader-app\src\app\App.tsx:164:49)
+
+[90mstderr[2m | src/tests/app-shell.test.tsx[2m > [22m[2mApp shell[2m > [22m[2mkeeps advanced controls collapsed by default and expands on demand
+[22m[39mWarning: An update to App inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at App (F:\Work\DouyinDownload\douyin-downloader-app\src\app\App.tsx:164:49)
+
+[90mstderr[2m | src/tests/app-shell.test.tsx[2m > [22m[2mApp shell[2m > [22m[2mbuilds queue rows from pasted multiline urls while preserving equal-weight mode controls
+[22m[39mWarning: An update to App inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at App (F:\Work\DouyinDownload\douyin-downloader-app\src\app\App.tsx:164:49)
+Warning: An update to App inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at App (F:\Work\DouyinDownload\douyin-downloader-app\src\app\App.tsx:164:49)
+
+ [32m✓[39m src/tests/log-store.test.ts [2m([22m[2m2 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+ [32m✓[39m src/tests/error-mapper.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+ [32m✓[39m src/tests/tauri-backend-runtime.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+[90mstderr[2m | src/tests/app-shell.test.tsx[2m > [22m[2mApp shell[2m > [22m[2mshows required validation for blank single URL submit
+[22m[39mWarning: An update to App inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at App (F:\Work\DouyinDownload\douyin-downloader-app\src\app\App.tsx:164:49)
+
+[90mstderr[2m | src/tests/app-shell.test.tsx[2m > [22m[2mApp shell[2m > [22m[2mrejects unsupported non-douyin URLs before submit
+[22m[39mWarning: An update to App inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at App (F:\Work\DouyinDownload\douyin-downloader-app\src\app\App.tsx:164:49)
+
+[90mstderr[2m | src/tests/app-shell.test.tsx[2m > [22m[2mApp shell[2m > [22m[2mrejects lookalike douyin hostnames before submit
+[22m[39mWarning: An update to App inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at App (F:\Work\DouyinDownload\douyin-downloader-app\src\app\App.tsx:164:49)
+
+[90mstderr[2m | src/tests/app-shell.test.tsx[2m > [22m[2mApp shell[2m > [22m[2mdisables submit while backend is not ready
+[22m[39mWarning: An update to App inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://reactjs.org/link/wrap-tests-with-act
+    at App (F:\Work\DouyinDownload\douyin-downloader-app\src\app\App.tsx:164:49)
+
+ [32m✓[39m src/tests/app-shell.test.tsx [2m([22m[2m35 tests[22m[2m)[22m[33m 9725[2mms[22m[39m
+   [33m[2m✓[22m[39m App shell[2m > [22mpauses new batch starts while active jobs continue to finish, then resumes waiting rows [33m1095[2mms[22m[39m
+   [33m[2m✓[22m[39m App shell[2m > [22mretries only the selected failed row from row action and does not resubmit unrelated failed rows [33m2121[2mms[22m[39m
+   [33m[2m✓[22m[39m App shell[2m > [22mshows terminal batch summary from row states after retry and reuses open-folder action [33m2100[2mms[22m[39m
+   [33m[2m✓[22m[39m App shell[2m > [22mrenders running and success counts from backend polling and stops on terminal status [33m1029[2mms[22m[39m
+   [33m[2m✓[22m[39m App shell[2m > [22mupdates the same batch history row to final status after retry [33m1075[2mms[22m[39m
+   [33m[2m✓[22m[39m App shell[2m > [22mshows batch cookie recovery action while keeping row retry context visible [33m1050[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m14 passed[39m[22m[90m (14)[39m
+[2m      Tests [22m [1m[32m104 passed[39m[22m[90m (104)[39m
+[2m   Start at [22m 17:32:13
+[2m   Duration [22m 12.60s[2m (transform 1.37s, setup 2.47s, collect 2.31s, tests 9.91s, environment 17.05s, prepare 2.94s)[22m
+

@@ -1,0 +1,37 @@
+
+> douyin-downloader-app@0.1.0 test:tauri
+> cargo test --manifest-path src-tauri/Cargo.toml
+
+   Compiling douyin-downloader-app v0.1.0 (F:\Work\DouyinDownload\douyin-downloader-app\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.41s
+     Running unittests src\main.rs (src-tauri\target\debug\deps\douyin_downloader_app-d4bda753b94e9027.exe)
+
+running 25 tests
+test backend::tests::accepts_allowlisted_runtime_state_file_names ... ok
+test backend::tests::accepts_cookie_map_when_all_required_keys_exist ... ok
+test backend::tests::marks_exit_code_130_cookie_fetch_as_cancelled ... ok
+test backend::tests::keeps_unrelated_module_not_found_diagnostics_as_failed ... ok
+test backend::tests::marks_missing_runtime_diagnostics_as_missing_runtime ... ok
+test backend::tests::marks_timeout_cookie_fetch_as_cancelled ... ok
+test backend::tests::keeps_ambiguous_playwright_diagnostics_as_failed ... ok
+test backend::tests::marks_other_non_zero_cookie_fetch_as_failed ... ok
+test backend::tests::marks_spawn_failure_missing_module_signature_as_missing_runtime ... ok
+test backend::tests::rejects_malformed_cookie_capture_json ... ok
+test backend::tests::rejects_non_object_cookie_capture_json ... ok
+test backend::tests::keeps_only_latest_backend_diagnostics_with_cap ... ok
+test backend::tests::rejects_runtime_state_file_name_outside_allowlist ... ok
+test backend::tests::reports_missing_required_cookie_keys ... ok
+test backend::tests::trims_and_filters_cookie_json_values ... ok
+test backend::tests::resolves_cookie_capture_output_path_inside_managed_runtime_directory ... ok
+test backend::tests::rejects_invalid_existing_yaml_when_committing_cookies ... ok
+test backend::tests::resolves_sidecar_executable_from_root_directory_when_backend_folder_is_missing ... ok
+test backend::tests::resolves_dev_backend_root_from_root_when_run_py_exists ... ok
+test backend::tests::resolves_dev_backend_root_from_child_directory_when_run_py_exists ... ok
+test backend::tests::resolves_sidecar_executable_from_backend_subdirectory ... ok
+test backend::tests::failed_atomic_commit_restores_previous_file_and_cleans_temp_files ... ok
+test backend::tests::resolves_dev_backend_root_from_src_tauri_layout_when_backend_is_workspace_sibling ... ok
+test backend::tests::cookie_commit_preserves_existing_fields_and_writes_cookies ... ok
+test backend::tests::settings_write_config_atomic_replaces_existing_file ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

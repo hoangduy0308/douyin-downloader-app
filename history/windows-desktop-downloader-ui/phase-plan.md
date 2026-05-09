@@ -96,10 +96,10 @@ This feature turns the existing Python Douyin downloader into a Windows desktop 
 ## 6. Approval Summary
 
 - **Phase plan approval state**: Approved before Phase 1 execution.
-- **Completed/prepared phase**: `Phase 1 - Desktop app starts one download`
-- **Current phase prepared next**: `Phase 2 - Batch queue is first-class`
-- **What the user should picture after Phase 2**: switching to Batch, importing or pasting multiple URLs, starting a visible queue, pausing future starts, resuming, retrying failed rows, and seeing final totals match row states.
-- **What will not happen until later phases**: cookie recovery, persisted history/logs, and portable zip proof remain planned but are not prepared for execution in Phase 2.
+- **Completed/prepared phase**: `Phase 2 - Batch queue is first-class`
+- **Current phase prepared next**: `Phase 3 - Recovery, controls, history, and logs`
+- **What the user should picture after Phase 3**: changing output/settings once, recovering from cookie failures through app-visible actions, restarting the app and seeing recent history, and opening Logs only when technical detail is needed.
+- **What will not happen until later phases**: portable unzip-and-run release proof remains Phase 4 and should not be treated as complete by Phase 3 tests.
 
 ---
 
@@ -110,3 +110,8 @@ This feature turns the existing Python Douyin downloader into a Windows desktop 
   - `history/windows-desktop-downloader-ui/phase-2-contract.md`
   - `history/windows-desktop-downloader-ui/phase-2-story-map.md`
 - The Phase 2 queue contract is app-owned orchestration over the existing single-job backend API unless validating proves a backend batch API or cancel API is required.
+- Phase 2 execution and self-review closed with deterministic fake-backend evidence in `history/windows-desktop-downloader-ui/phase-2-uat.md`.
+- Phase 3 is prepared in:
+  - `history/windows-desktop-downloader-ui/phase-3-contract.md`
+  - `history/windows-desktop-downloader-ui/phase-3-story-map.md`
+- The Phase 3 cookie recovery contract is high-risk. Validating must prove the app-triggered cookie fetch/import boundary before execution treats fetch-again as a guaranteed live capability.

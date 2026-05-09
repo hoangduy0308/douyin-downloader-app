@@ -1,0 +1,45 @@
+﻿{
+    "timestamp_utc":  "2026-05-09T10:30:03.1832095Z",
+    "command":  "npm run tauri dev",
+    "process_id":  30888,
+    "observed_exit_code":  null,
+    "health_probe":  {
+                         "ok":  true,
+                         "body":  {
+                                      "status":  "ok"
+                                  }
+                     },
+    "probe_count":  3,
+    "probes":  [
+                   {
+                       "at":  "2026-05-09T10:29:53.3056869Z",
+                       "ok":  false,
+                       "error":  "Unable to connect to the remote server"
+                   },
+                   {
+                       "at":  "2026-05-09T10:29:58.3557542Z",
+                       "ok":  false,
+                       "error":  "Unable to connect to the remote server"
+                   },
+                   {
+                       "at":  "2026-05-09T10:30:01.4088729Z",
+                       "ok":  true,
+                       "body":  {
+                                    "status":  "ok"
+                                }
+                   }
+               ],
+    "managed_python":  {
+                           "ProcessId":  15752,
+                           "CommandLine":  "\"python\" run.py --serve --serve-host 127.0.0.1 --serve-port 8787 --config C:\\Users\\hdi\\AppData\\Local\\com.hdi.douyindownloaderapp\\runtime\\managed-config.yml --path C:\\DouyinDownloads"
+                       },
+    "app_process":  {
+                        "ProcessId":  24176,
+                        "CommandLine":  "\"target\\debug\\douyin-downloader-app.exe\"",
+                        "ExecutablePath":  "F:\\Work\\DouyinDownload\\douyin-downloader-app\\src-tauri\\target\\debug\\douyin-downloader-app.exe"
+                    },
+    "out_log":  "history\\windows-desktop-downloader-ui\\evidence\\phase3-bead32-tauri-smoke.out.log",
+    "err_log":  "history\\windows-desktop-downloader-ui\\evidence\\phase3-bead32-tauri-smoke.err.log",
+    "out_tail":  "\n\u003e douyin-downloader-app@0.1.0 tauri\n\u003e tauri dev\n\n\n\u003e douyin-downloader-app@0.1.0 dev\n\u003e vite\n\n\n  \u001b[32m\u001b[1mVITE\u001b[22m v5.4.21\u001b[39m  \u001b[2mready in \u001b[0m\u001b[1m355\u001b[22m\u001b[2m\u001b[0m ms\u001b[22m\n\n  \u001b[32mâžœ\u001b[39m  \u001b[1mLocal\u001b[22m:   \u001b[36mhttp://localhost:\u001b[1m1420\u001b[22m/\u001b[39m\n\u001b[2m  \u001b[32mâžœ\u001b[39m  \u001b[1mNetwork\u001b[22m\u001b[2m: use \u001b[22m\u001b[1m--host\u001b[22m\u001b[2m to expose\u001b[22m",
+    "err_tail":  "     Running BeforeDevCommand (`npm run dev`)\n     Running DevCommand (`cargo  run --no-default-features --color always --`)\n        Info Watching F:\\Work\\DouyinDownload\\douyin-downloader-app\\src-tauri for changes...\n\u001b[1m\u001b[92m   Compiling\u001b[0m douyin-downloader-app v0.1.0 (F:\\Work\\DouyinDownload\\douyin-downloader-app\\src-tauri)\n\u001b[1m\u001b[96m    Building\u001b[0m [=======================\u003e ] 355/357: douyi...\n\u001b[1m\u001b[96m    Building\u001b[0m [=======================\u003e ] 356/357: douyi...\n                                                            \n\u001b[1m\u001b[92m    Finished\u001b[0m \u001b]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\u001b\\`dev` profile [unoptimized + debuginfo]\u001b]8;;\u001b\\ target(s) in 4.43s\n\u001b[1m\u001b[92m     Running\u001b[0m `target\\debug\\douyin-downloader-app.exe`\n\u001b[1m\u001b[91merror\u001b[0m: process didn\u0027t exit successfully: `target\\debug\\douyin-downloader-app.exe` (exit code: 0xffffffff)"
+}

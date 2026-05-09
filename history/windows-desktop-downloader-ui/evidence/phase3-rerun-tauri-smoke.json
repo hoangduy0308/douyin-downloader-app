@@ -1,0 +1,14 @@
+{
+    "timestamp_utc":  "2026-05-09T09:02:55.1911429Z",
+    "command":  "npm run tauri dev",
+    "process_id":  35900,
+    "still_running_after_wait":  true,
+    "observed_exit_code":  null,
+    "health_probe":  {
+                         "error":  "Unable to connect to the remote server"
+                     },
+    "out_log":  "history\\windows-desktop-downloader-ui\\evidence\\phase3-rerun-tauri-smoke.out.log",
+    "err_log":  "history\\windows-desktop-downloader-ui\\evidence\\phase3-rerun-tauri-smoke.err.log",
+    "out_tail":  "\n\u003e douyin-downloader-app@0.1.0 tauri\n\u003e tauri dev\n\n\n\u003e douyin-downloader-app@0.1.0 dev\n\u003e vite\n\n\n  \u001b[32m\u001b[1mVITE\u001b[22m v5.4.21\u001b[39m  \u001b[2mready in \u001b[0m\u001b[1m368\u001b[22m\u001b[2m\u001b[0m ms\u001b[22m\n\n  \u001b[32m➜\u001b[39m  \u001b[1mLocal\u001b[22m:   \u001b[36mhttp://localhost:\u001b[1m1420\u001b[22m/\u001b[39m\n\u001b[2m  \u001b[32m➜\u001b[39m  \u001b[1mNetwork\u001b[22m\u001b[2m: use \u001b[22m\u001b[1m--host\u001b[22m\u001b[2m to expose\u001b[22m",
+    "err_tail":  "     Running BeforeDevCommand (`npm run dev`)\n     Running DevCommand (`cargo  run --no-default-features --color always --`)\n        Info Watching F:\\Work\\DouyinDownload\\douyin-downloader-app\\src-tauri for changes...\n\u001b[1m\u001b[92m   Compiling\u001b[0m douyin-downloader-app v0.1.0 (F:\\Work\\DouyinDownload\\douyin-downloader-app\\src-tauri)\n\u001b[1m\u001b[96m    Building\u001b[0m [=======================\u003e ] 355/357: douyi...\n\u001b[1m\u001b[96m    Building\u001b[0m [=======================\u003e ] 356/357: douyi..."
+}

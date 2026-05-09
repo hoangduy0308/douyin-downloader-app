@@ -241,30 +241,65 @@ pub fn backend_start(
             python_executable, request.host, request.port
         );
     } else if mode == "managed-sidecar" {
-        let sidecar_path = resolve_sidecar_executable(&app_handle)?;
-        command = Command::new(&sidecar_path);
-        command
-            .arg("--serve-host")
-            .arg(&request.host)
-            .arg("--serve-port")
-            .arg(request.port.to_string())
-            .arg("--config")
-            .arg(&request.config_path)
-            .arg("--path")
-            .arg(&request.output_path)
-            .current_dir(
-                sidecar_path
-                    .parent()
-                    .ok_or_else(|| "sidecar executable has no parent directory".to_owned())?,
-            )
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        lifecycle_message = format!(
-            "Spawning managed sidecar backend command: {} --serve-host {} --serve-port {} --config <managed> --path <absolute-output>",
-            sidecar_path.display(),
-            request.host,
-            request.port
-        );
+        match resolve_sidecar_executable(&app_handle) {
+            Ok(sidecar_path) => {
+                command = Command::new(&sidecar_path);
+                command
+                    .arg("--serve-host")
+                    .arg(&request.host)
+                    .arg("--serve-port")
+                    .arg(request.port.to_string())
+                    .arg("--config")
+                    .arg(&request.config_path)
+                    .arg("--path")
+                    .arg(&request.output_path)
+                    .current_dir(sidecar_path.parent().ok_or_else(|| {
+                        "sidecar executable has no parent directory".to_owned()
+                    })?)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                lifecycle_message = format!(
+                    "Spawning managed sidecar backend command: {} --serve-host {} --serve-port {} --config <managed> --path <absolute-output>",
+                    sidecar_path.display(),
+                    request.host,
+                    request.port
+                );
+            }
+            Err(sidecar_error) if cfg!(debug_assertions) => {
+                let backend_root = resolve_dev_backend_root()?;
+                let python_executable = request
+                    .python_executable
+                    .clone()
+                    .or_else(|| std::env::var("DOUYIN_DOWNLOADER_DEV_PYTHON").ok())
+                    .unwrap_or_else(|| "python".to_owned());
+                command = Command::new(&python_executable);
+                command
+                    .env("PYTHONUTF8", "1")
+                    .env("PYTHONIOENCODING", "utf-8")
+                    .arg("run.py")
+                    .arg("--serve")
+                    .arg("--serve-host")
+                    .arg(&request.host)
+                    .arg("--serve-port")
+                    .arg(request.port.to_string())
+                    .arg("--config")
+                    .arg(&request.config_path)
+                    .arg("--path")
+                    .arg(&request.output_path)
+                    .current_dir(&backend_root)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                lifecycle_message = format!(
+                    "Managed sidecar unavailable in dev profile ({}). Falling back to dev-python command: {} run.py --serve --serve-host {} --serve-port {} --config <managed> --path <absolute-output> from {}",
+                    sidecar_error,
+                    python_executable,
+                    request.host,
+                    request.port,
+                    backend_root.display()
+                );
+            }
+            Err(sidecar_error) => return Err(sidecar_error),
+        }
     } else {
         return Err(format!("Unsupported backend mode: {}", request.mode));
     }
@@ -424,6 +459,58 @@ fn resolve_sidecar_executable_from_roots(search_roots: &[PathBuf]) -> Option<Pat
             let direct = root.join(name);
             if direct.is_file() {
                 return Some(direct);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_dev_backend_root() -> Result<PathBuf, String> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(configured_root) = std::env::var("DOUYIN_DOWNLOADER_BACKEND_ROOT") {
+        let trimmed = configured_root.trim();
+        if !trimmed.is_empty() {
+            candidates.push(PathBuf::from(trimmed));
+        }
+    }
+    if let Ok(current_directory) = std::env::current_dir() {
+        candidates.push(current_directory.clone());
+        candidates.push(current_directory.join("douyin-downloader"));
+        candidates.push(current_directory.join("..").join("douyin-downloader"));
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            let parent_path = parent.to_path_buf();
+            candidates.push(parent_path.clone());
+            candidates.push(parent_path.join("douyin-downloader"));
+            candidates.push(parent_path.join("..").join("douyin-downloader"));
+        }
+    }
+    if let Some(root) = resolve_dev_backend_root_from_roots(&candidates) {
+        return Ok(root);
+    }
+    Err(
+        "Managed sidecar fallback could not resolve a backend root with run.py. Set DOUYIN_DOWNLOADER_BACKEND_ROOT to an absolute path containing run.py."
+            .to_owned(),
+    )
+}
+
+fn resolve_dev_backend_root_from_roots(search_roots: &[PathBuf]) -> Option<PathBuf> {
+    for root in search_roots {
+        let canonical = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+        let mut candidates: Vec<PathBuf> = vec![canonical.clone(), canonical.join("douyin-downloader")];
+        let mut cursor = canonical.as_path();
+        for _ in 0..4 {
+            let Some(parent) = cursor.parent() else {
+                break;
+            };
+            candidates.push(parent.join("douyin-downloader"));
+            cursor = parent;
+        }
+
+        for candidate in candidates {
+            if candidate.join("run.py").is_file() {
+                return Some(fs::canonicalize(&candidate).unwrap_or(candidate));
             }
         }
     }
@@ -1031,16 +1118,17 @@ fn push_bounded_diagnostic(diagnostics: &mut Vec<BackendDiagnostic>, entry: Back
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_cookie_process_failure_response, commit_cookies_to_managed_config,
-        error_message_indicates_missing_runtime, missing_required_cookie_keys,
-        parse_cookie_capture_json_map, push_bounded_diagnostic,
-        resolve_allowed_runtime_state_file_name, resolve_cookie_capture_output_path,
-        resolve_sidecar_executable_from_roots, write_managed_config_atomic,
-        write_file_atomic_with_commit, BackendDiagnostic, CookieCaptureAndCommitResponse,
-        CookieProcessFailureKind,
-        BACKEND_DIAGNOSTICS_CAP, HISTORY_RUNTIME_FILE_NAME, OUTPUT_PATH_RUNTIME_FILE_NAME,
-    };
+      use super::{
+          build_cookie_process_failure_response, commit_cookies_to_managed_config,
+          error_message_indicates_missing_runtime, missing_required_cookie_keys,
+          parse_cookie_capture_json_map, push_bounded_diagnostic,
+          resolve_allowed_runtime_state_file_name, resolve_cookie_capture_output_path,
+          resolve_dev_backend_root_from_roots, resolve_sidecar_executable_from_roots,
+          write_managed_config_atomic,
+          write_file_atomic_with_commit, BackendDiagnostic, CookieCaptureAndCommitResponse,
+          CookieProcessFailureKind,
+          BACKEND_DIAGNOSTICS_CAP, HISTORY_RUNTIME_FILE_NAME, OUTPUT_PATH_RUNTIME_FILE_NAME,
+      };
     use std::collections::BTreeMap;
     use std::fs;
     use std::io;
@@ -1399,7 +1487,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_sidecar_executable_from_root_directory_when_backend_folder_is_missing() {
+      fn resolves_sidecar_executable_from_root_directory_when_backend_folder_is_missing() {
         let root = create_test_directory(
             "resolves_sidecar_executable_from_root_directory_when_backend_folder_is_missing",
         );
@@ -1408,7 +1496,48 @@ mod tests {
 
         let resolved = resolve_sidecar_executable_from_roots(&[root.clone()]);
 
-        assert_eq!(resolved.as_deref(), Some(sidecar.as_path()));
+          assert_eq!(resolved.as_deref(), Some(sidecar.as_path()));
+          let _ = fs::remove_dir_all(&root);
+      }
+
+      #[test]
+      fn resolves_dev_backend_root_from_root_when_run_py_exists() {
+          let root = create_test_directory("resolves_dev_backend_root_from_root_when_run_py_exists");
+          fs::write(root.join("run.py"), "print('ok')").expect("create run.py");
+          let resolved = resolve_dev_backend_root_from_roots(&[root.clone()]);
+          let expected = fs::canonicalize(&root).unwrap_or(root.clone());
+          assert_eq!(resolved.as_deref(), Some(expected.as_path()));
+          let _ = fs::remove_dir_all(&root);
+      }
+
+      #[test]
+    fn resolves_dev_backend_root_from_child_directory_when_run_py_exists() {
+        let root = create_test_directory(
+            "resolves_dev_backend_root_from_child_directory_when_run_py_exists",
+        );
+          let child = root.join("douyin-downloader");
+          fs::create_dir_all(&child).expect("create child directory");
+          fs::write(child.join("run.py"), "print('ok')").expect("create child run.py");
+          let resolved = resolve_dev_backend_root_from_roots(&[root.clone()]);
+          let expected = fs::canonicalize(&child).unwrap_or(child.clone());
+        assert_eq!(resolved.as_deref(), Some(expected.as_path()));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolves_dev_backend_root_from_src_tauri_layout_when_backend_is_workspace_sibling() {
+        let root = create_test_directory(
+            "resolves_dev_backend_root_from_src_tauri_layout_when_backend_is_workspace_sibling",
+        );
+        let app_src_tauri = root.join("douyin-downloader-app").join("src-tauri");
+        let sibling_backend = root.join("douyin-downloader");
+        fs::create_dir_all(&app_src_tauri).expect("create app src-tauri directory");
+        fs::create_dir_all(&sibling_backend).expect("create backend sibling directory");
+        fs::write(sibling_backend.join("run.py"), "print('ok')").expect("create sibling run.py");
+
+        let resolved = resolve_dev_backend_root_from_roots(&[app_src_tauri]);
+        let expected = fs::canonicalize(&sibling_backend).unwrap_or(sibling_backend.clone());
+        assert_eq!(resolved.as_deref(), Some(expected.as_path()));
         let _ = fs::remove_dir_all(&root);
     }
 

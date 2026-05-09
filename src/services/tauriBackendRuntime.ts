@@ -56,12 +56,31 @@ export interface CookieCaptureAndCommitResult {
   status: "success" | "cancelled" | "missing-runtime" | "failed";
   exitCode: number | null;
   diagnostics: string[];
-  cookies?: Record<string, string> | null;
   error?: string | null;
 }
 
+function hasTauriPlatformEnvHint(): boolean {
+  const env = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env;
+  const value = env?.TAURI_ENV_PLATFORM;
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasTauriIpcHint(): boolean {
+  const scope = globalThis as typeof globalThis & {
+    __TAURI_IPC__?: unknown;
+  };
+  return typeof scope.__TAURI_IPC__ === "function";
+}
+
+function hasTauriInternalsHint(): boolean {
+  const scope = globalThis as typeof globalThis & {
+    __TAURI_INTERNALS__?: unknown;
+  };
+  return typeof scope.__TAURI_INTERNALS__ === "object" && scope.__TAURI_INTERNALS__ !== null;
+}
+
 export function isTauriRuntimeAvailable(): boolean {
-  return isTauri();
+  return isTauri() || hasTauriPlatformEnvHint() || hasTauriIpcHint() || hasTauriInternalsHint();
 }
 
 export class TauriBackendRuntime implements BackendRuntime {
@@ -92,7 +111,7 @@ export class TauriBackendRuntime implements BackendRuntime {
 export async function resolveManagedConfigPath(
   fallbackPath: string,
 ): Promise<string> {
-  if (!isTauri()) {
+  if (!isTauriRuntimeAvailable()) {
     return fallbackPath;
   }
   const response = await invoke<RuntimePathsResponse>("backend_runtime_paths");
@@ -109,14 +128,14 @@ export async function openOutputFolder(path: string): Promise<void> {
 
 export async function ensureRuntimeDirectory(path: string): Promise<void> {
   void path;
-  if (!isTauri()) {
+  if (!isTauriRuntimeAvailable()) {
     return;
   }
   await invoke("settings_ensure_directory", { request: {} } satisfies SettingsEnsureDirectoryPayload);
 }
 
 export async function writeManagedConfigAtomic(contents: string): Promise<void> {
-  if (!isTauri()) {
+  if (!isTauriRuntimeAvailable()) {
     return;
   }
   await invoke("settings_write_config_atomic", {
@@ -127,7 +146,7 @@ export async function writeManagedConfigAtomic(contents: string): Promise<void> 
 }
 
 export async function readRuntimeStateFile(fileName: string): Promise<string | null> {
-  if (!isTauri()) {
+  if (!isTauriRuntimeAvailable()) {
     return null;
   }
   const contents = await invoke<string | null>("settings_read_text_file", {
@@ -139,7 +158,7 @@ export async function readRuntimeStateFile(fileName: string): Promise<string | n
 }
 
 export async function writeRuntimeStateFileAtomic(fileName: string, contents: string): Promise<void> {
-  if (!isTauri()) {
+  if (!isTauriRuntimeAvailable()) {
     return;
   }
   await invoke("settings_write_text_file_atomic", {
@@ -153,12 +172,11 @@ export async function writeRuntimeStateFileAtomic(fileName: string, contents: st
 export async function captureAndCommitCookies(request: {
   browser?: "chromium" | "firefox" | "webkit";
 }): Promise<CookieCaptureAndCommitResult> {
-  if (!isTauri()) {
+  if (!isTauriRuntimeAvailable()) {
     return {
       status: "missing-runtime",
       exitCode: null,
       diagnostics: ["Tauri runtime is unavailable."],
-      cookies: null,
       error: "tauri-runtime-unavailable",
     };
   }

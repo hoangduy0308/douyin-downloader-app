@@ -20,27 +20,24 @@ interface OpenOutputFolderPayload {
 }
 
 interface SettingsEnsureDirectoryPayload {
-  request: {
-    path: string;
-  };
+  request: Record<string, never>;
 }
 
 interface SettingsWriteConfigAtomicPayload {
   request: {
-    path: string;
     contents: string;
   };
 }
 
 interface SettingsReadTextFilePayload {
   request: {
-    path: string;
+    fileName: string;
   };
 }
 
 interface SettingsWriteTextFileAtomicPayload {
   request: {
-    path: string;
+    fileName: string;
     contents: string;
   };
 }
@@ -51,10 +48,6 @@ interface RuntimePathsResponse {
 
 interface CookieCaptureAndCommitPayload {
   request: {
-    backendRoot: string;
-    managedConfigPath: string;
-    outputPath: string;
-    pythonExecutable?: string;
     browser?: "chromium" | "firefox" | "webkit";
   };
 }
@@ -115,57 +108,49 @@ export async function openOutputFolder(path: string): Promise<void> {
 }
 
 export async function ensureRuntimeDirectory(path: string): Promise<void> {
+  void path;
   if (!isTauri()) {
     return;
   }
-  await invoke("settings_ensure_directory", {
-    request: {
-      path,
-    },
-  } satisfies SettingsEnsureDirectoryPayload);
+  await invoke("settings_ensure_directory", { request: {} } satisfies SettingsEnsureDirectoryPayload);
 }
 
-export async function writeManagedConfigAtomic(path: string, contents: string): Promise<void> {
+export async function writeManagedConfigAtomic(contents: string): Promise<void> {
   if (!isTauri()) {
     return;
   }
   await invoke("settings_write_config_atomic", {
     request: {
-      path,
       contents,
     },
   } satisfies SettingsWriteConfigAtomicPayload);
 }
 
-export async function readRuntimeStateFile(path: string): Promise<string | null> {
+export async function readRuntimeStateFile(fileName: string): Promise<string | null> {
   if (!isTauri()) {
     return null;
   }
   const contents = await invoke<string | null>("settings_read_text_file", {
     request: {
-      path,
+      fileName,
     },
   } satisfies SettingsReadTextFilePayload);
   return contents ?? null;
 }
 
-export async function writeRuntimeStateFileAtomic(path: string, contents: string): Promise<void> {
+export async function writeRuntimeStateFileAtomic(fileName: string, contents: string): Promise<void> {
   if (!isTauri()) {
     return;
   }
   await invoke("settings_write_text_file_atomic", {
     request: {
-      path,
+      fileName,
       contents,
     },
   } satisfies SettingsWriteTextFileAtomicPayload);
 }
 
 export async function captureAndCommitCookies(request: {
-  backendRoot: string;
-  managedConfigPath: string;
-  outputPath: string;
-  pythonExecutable?: string;
   browser?: "chromium" | "firefox" | "webkit";
 }): Promise<CookieCaptureAndCommitResult> {
   if (!isTauri()) {

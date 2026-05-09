@@ -10,10 +10,6 @@ export const REQUIRED_COOKIE_KEYS = [
 export type CookieRecoveryStatus = "success" | "cancelled" | "missing-runtime" | "failed";
 
 export interface CookieRecoveryCommandRequest {
-  backendRoot: string;
-  managedConfigPath: string;
-  outputPath: string;
-  pythonExecutable?: string;
   browser?: "chromium" | "firefox" | "webkit";
 }
 

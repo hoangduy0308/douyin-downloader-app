@@ -33,13 +33,13 @@ vi.mock("../services/tauriBackendRuntime", () => ({
   openOutputFolder: (path: string) => mocks.openOutputFolderMock(path),
     captureAndCommitCookies: (request: unknown) => mocks.captureAndCommitCookiesMock(request),
       ensureRuntimeDirectory: (path: string) => mocks.ensureRuntimeDirectoryMock(path),
-      writeManagedConfigAtomic: (path: string, contents: string) =>
-        mocks.writeManagedConfigAtomicMock(path, contents),
+      writeManagedConfigAtomic: (contents: string) =>
+        mocks.writeManagedConfigAtomicMock(contents),
       resolveManagedConfigPath: (fallbackPath: string) =>
         mocks.resolveManagedConfigPathMock(fallbackPath),
-      readRuntimeStateFile: (path: string) => mocks.readRuntimeStateFileMock(path),
-      writeRuntimeStateFileAtomic: (path: string, contents: string) =>
-        mocks.writeRuntimeStateFileAtomicMock(path, contents),
+      readRuntimeStateFile: (fileName: string) => mocks.readRuntimeStateFileMock(fileName),
+      writeRuntimeStateFileAtomic: (fileName: string, contents: string) =>
+        mocks.writeRuntimeStateFileAtomicMock(fileName, contents),
       TauriBackendRuntime: class {},
     }));
 
@@ -148,7 +148,7 @@ import { App } from "../app/App";
       mocks.runtimeAvailable = true;
       window.localStorage.setItem(OUTPUT_PATH_STORAGE_KEY, "D:\\LocalStorage\\Downloads");
       runtimeStateFiles.set(
-        "C:\\Users\\hdi\\AppData\\Local\\DouyinDownloaderApp\\runtime\\output-path.txt",
+        "output-path.txt",
         "D:\\Persisted\\Downloads",
       );
 
@@ -243,7 +243,7 @@ import { App } from "../app/App";
       });
       const latestCall =
         mocks.writeManagedConfigAtomicMock.mock.calls[mocks.writeManagedConfigAtomicMock.mock.calls.length - 1];
-      const latestYaml = latestCall[1] as string;
+      const latestYaml = latestCall[0] as string;
 
       expect(latestYaml).toContain("retry_times: 6");
       expect(latestYaml).toContain("browser_fallback:");
@@ -1189,8 +1189,7 @@ import { App } from "../app/App";
         mocks.captureAndCommitCookiesMock,
       ).toHaveBeenCalledWith(
         expect.objectContaining({
-          managedConfigPath:
-            "C:\\Users\\hdi\\AppData\\Local\\DouyinDownloaderApp\\runtime\\managed-config.yml",
+          browser: "chromium",
         }),
       );
   });

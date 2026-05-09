@@ -18,10 +18,6 @@ class FakeCookieRecoveryGateway implements CookieRecoveryGateway {
 
 describe("CookieRecoveryService", () => {
   const baseRequest: CookieRecoveryCommandRequest = {
-    backendRoot: "F:\\Work\\DouyinDownload\\douyin-downloader",
-    managedConfigPath: "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml",
-    outputPath: "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\cookies.capture.json",
-    pythonExecutable: "python",
     browser: "chromium",
   };
 
@@ -41,7 +37,7 @@ describe("CookieRecoveryService", () => {
 
     const result = await service.captureAndCommit(baseRequest);
 
-    expect(gateway.lastRequest?.managedConfigPath).toBe(baseRequest.managedConfigPath);
+    expect(gateway.lastRequest).toEqual({ browser: "chromium" });
     expect(result.status).toBe("success");
     expect(result.primaryMessage).toBe("Cookies were refreshed. Retry the failed download now.");
     expect(result.diagnostics).toEqual(["stdout: [INFO] Saved cookies"]);

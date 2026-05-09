@@ -139,27 +139,9 @@ function writeToBrowserStorage(key: string, value: string): void {
   window.localStorage.setItem(key, value);
 }
 
-function resolveRuntimeStatePathFromManagedConfigPath(
-  managedConfigPath: string,
-  fileName: string,
-): string {
-  const normalized = managedConfigPath.replace(/\//g, "\\");
-  const separatorIndex = normalized.lastIndexOf("\\");
-  if (separatorIndex <= 0) {
-    return `${normalized}\\${fileName}`;
-  }
-  return `${normalized.slice(0, separatorIndex)}\\${fileName}`;
-}
-
-async function resolveRuntimeStatePath(fileName: string): Promise<string> {
-  const managedConfigPath = await resolveManagedConfigPath(FALLBACK_MANAGED_CONFIG_PATH);
-  return resolveRuntimeStatePathFromManagedConfigPath(managedConfigPath, fileName);
-}
-
 async function readPersistedOutputPath(): Promise<string> {
   if (isTauriRuntimeAvailable()) {
-    const outputPathStateFile = await resolveRuntimeStatePath(OUTPUT_PATH_RUNTIME_FILE_NAME);
-    const persisted = await readRuntimeStateFile(outputPathStateFile);
+    const persisted = await readRuntimeStateFile(OUTPUT_PATH_RUNTIME_FILE_NAME);
     if (persisted && persisted.trim().length > 0) {
       return persisted.trim();
     }
@@ -183,12 +165,12 @@ function createRuntimeSettingsWriter(): RuntimeConfigWriter {
       await ensureRuntimeDirectory(path);
     },
     async writeConfigAtomic(path: string, contents: string): Promise<void> {
-      await writeManagedConfigAtomic(path, contents);
+      void path;
+      await writeManagedConfigAtomic(contents);
     },
     async persistOutputPath(path: string): Promise<void> {
       if (isTauriRuntimeAvailable()) {
-        const outputPathStateFile = await resolveRuntimeStatePath(OUTPUT_PATH_RUNTIME_FILE_NAME);
-        await writeRuntimeStateFileAtomic(outputPathStateFile, path);
+        await writeRuntimeStateFileAtomic(OUTPUT_PATH_RUNTIME_FILE_NAME, path);
         return;
       }
       writeToBrowserStorage(OUTPUT_PATH_STORAGE_KEY, path);
@@ -200,15 +182,13 @@ function createHistoryFileStore(): HistoryFileStore {
   return {
     async read(): Promise<string | null> {
       if (isTauriRuntimeAvailable()) {
-        const historyStateFile = await resolveRuntimeStatePath(HISTORY_RUNTIME_FILE_NAME);
-        return readRuntimeStateFile(historyStateFile);
+        return readRuntimeStateFile(HISTORY_RUNTIME_FILE_NAME);
       }
       return readFromBrowserStorage(HISTORY_STORAGE_KEY);
     },
     async write(nextContents: string): Promise<void> {
       if (isTauriRuntimeAvailable()) {
-        const historyStateFile = await resolveRuntimeStatePath(HISTORY_RUNTIME_FILE_NAME);
-        await writeRuntimeStateFileAtomic(historyStateFile, nextContents);
+        await writeRuntimeStateFileAtomic(HISTORY_RUNTIME_FILE_NAME, nextContents);
         return;
       }
       writeToBrowserStorage(HISTORY_STORAGE_KEY, nextContents);
@@ -673,10 +653,6 @@ export function App(): JSX.Element {
 
   const buildCookieRecoveryRequest = () => {
     return {
-      backendRoot: BACKEND_LAUNCH_CONFIG.backendRoot ?? "",
-      managedConfigPath,
-      outputPath: hasConfiguredOutputPath ? trimmedOutputPath : DEFAULT_OUTPUT_PATH,
-      pythonExecutable: BACKEND_LAUNCH_CONFIG.pythonExecutable,
       browser: "chromium" as const,
     };
   };

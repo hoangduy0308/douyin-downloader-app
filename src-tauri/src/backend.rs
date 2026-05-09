@@ -13,6 +13,8 @@ const BACKEND_DIAGNOSTICS_CAP: usize = 500;
 const REQUIRED_COOKIE_KEYS: [&str; 4] = ["msToken", "ttwid", "odin_tt", "passport_csrf_token"];
 const COOKIE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(120);
 const COOKIE_CAPTURE_CONFIRMATION_DELAY: Duration = Duration::from_secs(45);
+const OUTPUT_PATH_RUNTIME_FILE_NAME: &str = "output-path.txt";
+const HISTORY_RUNTIME_FILE_NAME: &str = "history.v1.json";
 const SIDECAR_BINARY_NAMES: [&str; 3] = [
     "douyin-backend-sidecar-entry.exe",
     "douyin-backend-sidecar.exe",
@@ -119,36 +121,26 @@ pub struct OpenOutputFolderRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SettingsEnsureDirectoryRequest {
-    pub path: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SettingsWriteConfigAtomicRequest {
-    pub path: String,
     pub contents: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsReadTextFileRequest {
-    pub path: String,
+    pub file_name: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsWriteTextFileAtomicRequest {
-    pub path: String,
+    pub file_name: String,
     pub contents: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CookieCaptureAndCommitRequest {
-    pub backend_root: String,
-    pub managed_config_path: String,
-    pub python_executable: Option<String>,
     pub browser: Option<String>,
 }
 
@@ -365,6 +357,36 @@ fn resolve_managed_config_path(app_handle: &tauri::AppHandle) -> Result<PathBuf,
         .join("managed-config.yml"))
 }
 
+fn resolve_runtime_directory(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let managed_config_path = resolve_managed_config_path(app_handle)?;
+    managed_config_path.parent().map(Path::to_path_buf).ok_or_else(|| {
+        format!(
+            "Managed config path has no runtime parent directory: {}",
+            managed_config_path.display()
+        )
+    })
+}
+
+fn resolve_allowed_runtime_state_file_name(file_name: &str) -> Result<&'static str, String> {
+    match file_name.trim() {
+        OUTPUT_PATH_RUNTIME_FILE_NAME => Ok(OUTPUT_PATH_RUNTIME_FILE_NAME),
+        HISTORY_RUNTIME_FILE_NAME => Ok(HISTORY_RUNTIME_FILE_NAME),
+        _ => Err(format!(
+            "Runtime state file is not allowlisted: '{}'",
+            file_name
+        )),
+    }
+}
+
+fn resolve_runtime_state_file_path(
+    app_handle: &tauri::AppHandle,
+    file_name: &str,
+) -> Result<PathBuf, String> {
+    let runtime_directory = resolve_runtime_directory(app_handle)?;
+    let allowed_file_name = resolve_allowed_runtime_state_file_name(file_name)?;
+    Ok(runtime_directory.join(allowed_file_name))
+}
+
 fn resolve_sidecar_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(executable) = std::env::current_exe() {
@@ -408,49 +430,57 @@ fn resolve_sidecar_executable_from_roots(search_roots: &[PathBuf]) -> Option<Pat
     None
 }
 
+fn resolve_cookie_backend_root() -> Result<PathBuf, String> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(configured_root) = std::env::var("DOUYIN_DOWNLOADER_BACKEND_ROOT") {
+        let trimmed = configured_root.trim();
+        if !trimmed.is_empty() {
+            candidates.push(PathBuf::from(trimmed));
+        }
+    }
+
+    if let Ok(current_directory) = std::env::current_dir() {
+        candidates.push(current_directory.clone());
+        candidates.push(current_directory.join("douyin-downloader"));
+        candidates.push(current_directory.join("..").join("douyin-downloader"));
+    }
+
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            let parent_path = parent.to_path_buf();
+            candidates.push(parent_path.clone());
+            candidates.push(parent_path.join("douyin-downloader"));
+            candidates.push(parent_path.join("..").join("douyin-downloader"));
+        }
+    }
+
+    for candidate in candidates {
+        let canonical = fs::canonicalize(&candidate).unwrap_or(candidate);
+        let cookie_fetcher = canonical.join("tools").join("cookie_fetcher.py");
+        if cookie_fetcher.is_file() {
+            return Ok(canonical);
+        }
+    }
+
+    Err(
+        "Cookie backend root could not be resolved from native runtime candidates. Set DOUYIN_DOWNLOADER_BACKEND_ROOT to an absolute path that contains tools/cookie_fetcher.py."
+            .to_owned(),
+    )
+}
+
 #[tauri::command]
 pub fn cookie_capture_and_commit(
     request: CookieCaptureAndCommitRequest,
+    app_handle: tauri::AppHandle,
 ) -> Result<CookieCaptureAndCommitResponse, String> {
-    let backend_root = PathBuf::from(request.backend_root.trim());
-    if !backend_root.is_absolute() {
-        return Ok(CookieCaptureAndCommitResponse {
-            status: "failed".to_owned(),
-            exit_code: None,
-            diagnostics: Vec::new(),
-            cookies: None,
-            error: Some("Backend root must be an absolute path.".to_owned()),
-        });
-    }
-    if !backend_root.exists() {
-        return Ok(CookieCaptureAndCommitResponse {
-            status: "failed".to_owned(),
-            exit_code: None,
-            diagnostics: Vec::new(),
-            cookies: None,
-            error: Some(format!(
-                "Backend root does not exist: {}",
-                backend_root.display()
-            )),
-        });
-    }
-
-    let managed_config_path = PathBuf::from(request.managed_config_path.trim());
-    if !managed_config_path.is_absolute() {
-        return Ok(CookieCaptureAndCommitResponse {
-            status: "failed".to_owned(),
-            exit_code: None,
-            diagnostics: Vec::new(),
-            cookies: None,
-            error: Some("Managed config path must be absolute.".to_owned()),
-        });
-    }
+    let backend_root = resolve_cookie_backend_root()?;
+    let managed_config_path = resolve_managed_config_path(&app_handle)?;
 
     let output_path = resolve_cookie_capture_output_path(&managed_config_path)?;
 
-    let python_executable = request.python_executable.unwrap_or_else(|| "python".to_owned());
     let browser = request.browser.unwrap_or_else(|| "chromium".to_owned());
-    let mut command = Command::new(&python_executable);
+    let mut command = Command::new("python");
     command
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
@@ -618,77 +648,55 @@ pub fn open_output_folder(
 }
 
 #[tauri::command]
-pub fn settings_ensure_directory(request: SettingsEnsureDirectoryRequest) -> Result<(), String> {
-    let path = request.path.trim().to_owned();
-    if path.is_empty() {
-        return Err("Directory path is empty".to_owned());
-    }
-    let directory = Path::new(&path);
-    if !directory.is_absolute() {
-        return Err(format!("Directory path must be absolute: {}", path));
-    }
-    fs::create_dir_all(directory)
-        .map_err(|error| format!("Failed to ensure directory '{}': {}", path, error))?;
+pub fn settings_ensure_directory(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let runtime_directory = resolve_runtime_directory(&app_handle)?;
+    fs::create_dir_all(&runtime_directory).map_err(|error| {
+        format!(
+            "Failed to ensure runtime directory '{}': {}",
+            runtime_directory.display(),
+            error
+        )
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn settings_write_config_atomic(request: SettingsWriteConfigAtomicRequest) -> Result<(), String> {
-    let path = request.path.trim().to_owned();
-    if path.is_empty() {
-        return Err("Managed config path is empty".to_owned());
-    }
-
-    let target_path = PathBuf::from(&path);
-    if !target_path.is_absolute() {
-        return Err(format!("Managed config path must be absolute: {}", path));
-    }
-
-    write_file_atomic(&target_path, &request.contents, "managed-config")
+pub fn settings_write_config_atomic(
+    request: SettingsWriteConfigAtomicRequest,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let managed_config_path = resolve_managed_config_path(&app_handle)?;
+    write_managed_config_atomic(&managed_config_path, &request.contents)
 }
 
 #[tauri::command]
-pub fn settings_read_text_file(request: SettingsReadTextFileRequest) -> Result<Option<String>, String> {
-    let path = request.path.trim().to_owned();
-    if path.is_empty() {
-        return Err("Text file path is empty".to_owned());
-    }
-    let target_path = PathBuf::from(&path);
-    if !target_path.is_absolute() {
-        return Err(format!("Text file path must be absolute: {}", path));
-    }
-
+pub fn settings_read_text_file(
+    request: SettingsReadTextFileRequest,
+    app_handle: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let target_path = resolve_runtime_state_file_path(&app_handle, &request.file_name)?;
     match fs::read_to_string(&target_path) {
         Ok(contents) => Ok(Some(contents)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("Failed to read text file '{}': {}", path, error)),
+        Err(error) => Err(format!(
+            "Failed to read text file '{}': {}",
+            target_path.display(),
+            error
+        )),
     }
 }
 
 #[tauri::command]
 pub fn settings_write_text_file_atomic(
     request: SettingsWriteTextFileAtomicRequest,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let path = request.path.trim().to_owned();
-    if path.is_empty() {
-        return Err("Text file path is empty".to_owned());
-    }
-    let target_path = PathBuf::from(&path);
-    if !target_path.is_absolute() {
-        return Err(format!("Text file path must be absolute: {}", path));
-    }
-
-    if let Some(parent) = target_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "Failed to ensure runtime text file directory '{}': {}",
-                parent.display(),
-                error
-            )
-        })?;
-    }
-
+    let target_path = resolve_runtime_state_file_path(&app_handle, &request.file_name)?;
     write_file_atomic(&target_path, &request.contents, "runtime-state")
+}
+
+fn write_managed_config_atomic(managed_config_path: &Path, contents: &str) -> Result<(), String> {
+    write_file_atomic(managed_config_path, contents, "managed-config")
 }
 
 fn write_file_atomic(target_path: &Path, contents: &str, temp_label: &str) -> Result<(), String> {
@@ -992,14 +1000,10 @@ mod tests {
     use super::{
         build_cookie_process_failure_response, commit_cookies_to_managed_config,
         missing_required_cookie_keys, parse_cookie_capture_json_map, push_bounded_diagnostic,
-        resolve_cookie_capture_output_path, resolve_sidecar_executable_from_roots,
-        settings_read_text_file,
-        settings_write_config_atomic,
-        settings_write_text_file_atomic,
+        resolve_allowed_runtime_state_file_name, resolve_cookie_capture_output_path,
+        resolve_sidecar_executable_from_roots, write_managed_config_atomic,
         write_file_atomic_with_commit, BackendDiagnostic, CookieProcessFailureKind,
-        SettingsReadTextFileRequest,
-        SettingsWriteConfigAtomicRequest, BACKEND_DIAGNOSTICS_CAP,
-        SettingsWriteTextFileAtomicRequest,
+        BACKEND_DIAGNOSTICS_CAP, HISTORY_RUNTIME_FILE_NAME, OUTPUT_PATH_RUNTIME_FILE_NAME,
     };
     use std::collections::BTreeMap;
     use std::fs;
@@ -1121,10 +1125,7 @@ mod tests {
         let target = root.join("managed-config.yml");
         fs::write(&target, "old: true\n").expect("seed managed config");
 
-        let result = settings_write_config_atomic(SettingsWriteConfigAtomicRequest {
-            path: target.display().to_string(),
-            contents: "new: value\n".to_owned(),
-        });
+        let result = write_managed_config_atomic(&target, "new: value\n");
 
         assert!(result.is_ok());
         assert_eq!(
@@ -1136,53 +1137,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_relative_managed_config_path_for_settings_write() {
-        let result = settings_write_config_atomic(SettingsWriteConfigAtomicRequest {
-            path: "managed-config.yml".to_owned(),
-            contents: "new: value\n".to_owned(),
-        });
-
+    fn rejects_runtime_state_file_name_outside_allowlist() {
+        let result = resolve_allowed_runtime_state_file_name("..\\outside.txt");
         assert!(result.is_err());
-        assert!(
-            result
-                .err()
-                .expect("relative-path error")
-                .contains("must be absolute")
-        );
+        assert!(result.err().expect("allowlist error").contains("allowlisted"));
     }
 
     #[test]
-    fn settings_write_text_file_atomic_persists_and_settings_read_text_file_loads() {
-        let root = create_test_directory("settings_write_text_file_atomic_persists_and_settings_read_text_file_loads");
-        let target = root.join("runtime-state.txt");
+    fn accepts_allowlisted_runtime_state_file_names() {
+        let output = resolve_allowed_runtime_state_file_name(OUTPUT_PATH_RUNTIME_FILE_NAME)
+            .expect("output path state file");
+        assert_eq!(output, OUTPUT_PATH_RUNTIME_FILE_NAME);
 
-        let write_result = settings_write_text_file_atomic(SettingsWriteTextFileAtomicRequest {
-            path: target.display().to_string(),
-            contents: "persisted-output-path".to_owned(),
-        });
-        assert!(write_result.is_ok());
-
-        let read_result = settings_read_text_file(SettingsReadTextFileRequest {
-            path: target.display().to_string(),
-        });
-        assert!(read_result.is_ok());
-        assert_eq!(
-            read_result.expect("read result"),
-            Some("persisted-output-path".to_owned())
-        );
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn settings_read_text_file_returns_none_for_missing_path() {
-        let root = create_test_directory("settings_read_text_file_returns_none_for_missing_path");
-        let target = root.join("missing-runtime-state.txt");
-        let result = settings_read_text_file(SettingsReadTextFileRequest {
-            path: target.display().to_string(),
-        });
-        assert!(result.is_ok());
-        assert_eq!(result.expect("read result"), None);
-        let _ = fs::remove_dir_all(&root);
+        let history = resolve_allowed_runtime_state_file_name(HISTORY_RUNTIME_FILE_NAME)
+            .expect("history state file");
+        assert_eq!(history, HISTORY_RUNTIME_FILE_NAME);
     }
 
     #[test]

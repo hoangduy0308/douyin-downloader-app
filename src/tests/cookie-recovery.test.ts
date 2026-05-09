@@ -5,6 +5,15 @@ import {
   type CookieRecoveryGateway,
 } from "../services/cookieRecovery";
 
+type LegacyCookieFixture = CookieRecoveryCommandResult & {
+  cookies: {
+    msToken: string;
+    ttwid: string;
+    odin_tt: string;
+    passport_csrf_token: string;
+  };
+};
+
 class FakeCookieRecoveryGateway implements CookieRecoveryGateway {
   public lastRequest: CookieRecoveryCommandRequest | null = null;
 
@@ -13,6 +22,32 @@ class FakeCookieRecoveryGateway implements CookieRecoveryGateway {
   public async captureAndCommit(request: CookieRecoveryCommandRequest): Promise<CookieRecoveryCommandResult> {
     this.lastRequest = request;
     return this.result;
+  }
+}
+
+function createLegacyCookieFixture(
+  base: CookieRecoveryCommandResult,
+): LegacyCookieFixture {
+  return {
+    ...base,
+    cookies: {
+      msToken: "ms-token",
+      ttwid: "ttwid-token",
+      odin_tt: "odin-token",
+      passport_csrf_token: "csrf-token",
+    },
+  };
+}
+
+class DriftStatusCookieRecoveryGateway implements CookieRecoveryGateway {
+  public async captureAndCommit(): Promise<CookieRecoveryCommandResult> {
+    return JSON.parse(
+      JSON.stringify({
+        status: "unexpected-status",
+        exitCode: 0,
+        diagnostics: ["stdout: cookie output parsed but status was unexpected"],
+      }),
+    );
   }
 }
 
@@ -74,17 +109,11 @@ describe("CookieRecoveryService", () => {
 
   it("does not expose cookie values to renderer-facing result payloads", async () => {
     const gateway = new FakeCookieRecoveryGateway(
-      {
+      createLegacyCookieFixture({
         status: "success",
         exitCode: 0,
         diagnostics: ["stdout: [INFO] Saved cookies"],
-        cookies: {
-          msToken: "ms-token",
-          ttwid: "ttwid-token",
-          odin_tt: "odin-token",
-          passport_csrf_token: "csrf-token",
-        },
-      } as unknown as CookieRecoveryCommandResult,
+      }),
     );
     const service = new CookieRecoveryService(gateway);
 
@@ -113,13 +142,7 @@ describe("CookieRecoveryService", () => {
   });
 
   it("treats unexpected backend statuses as failed contract drift", async () => {
-    const gateway = new FakeCookieRecoveryGateway(
-      {
-        status: "unexpected-status",
-        exitCode: 0,
-        diagnostics: ["stdout: cookie output parsed but status was unexpected"],
-      } as unknown as CookieRecoveryCommandResult,
-    );
+    const gateway = new DriftStatusCookieRecoveryGateway();
     const service = new CookieRecoveryService(gateway);
 
     const result = await service.captureAndCommit(baseRequest);

@@ -9,12 +9,15 @@ import { vi } from "vitest";
   openOutputFolderMock: vi.fn(),
   captureAndCommitCookiesMock: vi.fn(),
     ensureRuntimeDirectoryMock: vi.fn(),
-    writeManagedConfigAtomicMock: vi.fn(),
-    resolveManagedConfigPathMock: vi.fn(),
-    readImportedBatchTextMock: vi.fn(),
-  }));
+      writeManagedConfigAtomicMock: vi.fn(),
+      resolveManagedConfigPathMock: vi.fn(),
+      readRuntimeStateFileMock: vi.fn(),
+      writeRuntimeStateFileAtomicMock: vi.fn(),
+      readImportedBatchTextMock: vi.fn(),
+    }));
 
 const OUTPUT_PATH_STORAGE_KEY = "douyin-downloader-app.output-path";
+const runtimeStateFiles = new Map<string, string>();
 
 vi.mock("../services/backendClient", () => ({
   createBackendClient: () => ({
@@ -28,14 +31,17 @@ vi.mock("../services/backendClient", () => ({
 vi.mock("../services/tauriBackendRuntime", () => ({
   isTauriRuntimeAvailable: () => mocks.runtimeAvailable,
   openOutputFolder: (path: string) => mocks.openOutputFolderMock(path),
-  captureAndCommitCookies: (request: unknown) => mocks.captureAndCommitCookiesMock(request),
-    ensureRuntimeDirectory: (path: string) => mocks.ensureRuntimeDirectoryMock(path),
-    writeManagedConfigAtomic: (path: string, contents: string) =>
-      mocks.writeManagedConfigAtomicMock(path, contents),
-    resolveManagedConfigPath: (fallbackPath: string) =>
-      mocks.resolveManagedConfigPathMock(fallbackPath),
-    TauriBackendRuntime: class {},
-  }));
+    captureAndCommitCookies: (request: unknown) => mocks.captureAndCommitCookiesMock(request),
+      ensureRuntimeDirectory: (path: string) => mocks.ensureRuntimeDirectoryMock(path),
+      writeManagedConfigAtomic: (path: string, contents: string) =>
+        mocks.writeManagedConfigAtomicMock(path, contents),
+      resolveManagedConfigPath: (fallbackPath: string) =>
+        mocks.resolveManagedConfigPathMock(fallbackPath),
+      readRuntimeStateFile: (path: string) => mocks.readRuntimeStateFileMock(path),
+      writeRuntimeStateFileAtomic: (path: string, contents: string) =>
+        mocks.writeRuntimeStateFileAtomicMock(path, contents),
+      TauriBackendRuntime: class {},
+    }));
 
 vi.mock("../services/batchImportAdapter", () => ({
   readImportedBatchText: () => mocks.readImportedBatchTextMock(),
@@ -64,7 +70,7 @@ vi.mock("../services/backendLifecycle", () => {
 import { App } from "../app/App";
 
   describe("App shell", () => {
-    beforeEach(() => {
+      beforeEach(() => {
     vi.useRealTimers();
     mocks.runtimeAvailable = false;
     mocks.createDownloadJobMock.mockReset();
@@ -72,10 +78,12 @@ import { App } from "../app/App";
       mocks.lifecycleStartMock.mockReset();
       mocks.openOutputFolderMock.mockReset();
       mocks.captureAndCommitCookiesMock.mockReset();
-        mocks.ensureRuntimeDirectoryMock.mockReset();
-        mocks.writeManagedConfigAtomicMock.mockReset();
-        mocks.resolveManagedConfigPathMock.mockReset();
-        mocks.readImportedBatchTextMock.mockReset();
+          mocks.ensureRuntimeDirectoryMock.mockReset();
+          mocks.writeManagedConfigAtomicMock.mockReset();
+          mocks.resolveManagedConfigPathMock.mockReset();
+          mocks.readRuntimeStateFileMock.mockReset();
+          mocks.writeRuntimeStateFileAtomicMock.mockReset();
+          mocks.readImportedBatchTextMock.mockReset();
     mocks.lifecycleStartMock.mockResolvedValue({
       state: "ready",
       detail: "Backend is ready.",
@@ -90,12 +98,19 @@ import { App } from "../app/App";
       });
         mocks.ensureRuntimeDirectoryMock.mockResolvedValue(undefined);
         mocks.writeManagedConfigAtomicMock.mockResolvedValue(undefined);
-        mocks.resolveManagedConfigPathMock.mockResolvedValue(
-          "C:\\Users\\hdi\\AppData\\Local\\DouyinDownloaderApp\\runtime\\managed-config.yml",
-        );
-        mocks.readImportedBatchTextMock.mockResolvedValue("");
-        window.localStorage.clear();
-    });
+          mocks.resolveManagedConfigPathMock.mockResolvedValue(
+            "C:\\Users\\hdi\\AppData\\Local\\DouyinDownloaderApp\\runtime\\managed-config.yml",
+          );
+          runtimeStateFiles.clear();
+          mocks.readRuntimeStateFileMock.mockImplementation(async (path: string) => {
+            return runtimeStateFiles.get(path) ?? null;
+          });
+          mocks.writeRuntimeStateFileAtomicMock.mockImplementation(async (path: string, contents: string) => {
+            runtimeStateFiles.set(path, contents);
+          });
+          mocks.readImportedBatchTextMock.mockResolvedValue("");
+          window.localStorage.clear();
+      });
 
   it("renders first-screen workflow controls with single and batch tabs", () => {
   render(<App />);
@@ -129,11 +144,15 @@ import { App } from "../app/App";
       expect(screen.queryByLabelText("Search")).not.toBeInTheDocument();
     });
 
-  it("loads persisted output folder before starting managed backend lifecycle", async () => {
-    mocks.runtimeAvailable = true;
-    window.localStorage.setItem(OUTPUT_PATH_STORAGE_KEY, "D:\\Persisted\\Downloads");
+    it("loads persisted output folder before starting managed backend lifecycle", async () => {
+      mocks.runtimeAvailable = true;
+      window.localStorage.setItem(OUTPUT_PATH_STORAGE_KEY, "D:\\LocalStorage\\Downloads");
+      runtimeStateFiles.set(
+        "C:\\Users\\hdi\\AppData\\Local\\DouyinDownloaderApp\\runtime\\output-path.txt",
+        "D:\\Persisted\\Downloads",
+      );
 
-      render(<App />);
+        render(<App />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Download location")).toHaveValue("D:\\Persisted\\Downloads");
@@ -1007,11 +1026,12 @@ import { App } from "../app/App";
       expect(matchingRows[0]).not.toHaveTextContent("failed");
     });
 
-    it("loads persisted history after app restart", async () => {
-      mocks.createDownloadJobMock.mockResolvedValueOnce({
-        jobId: "job-history-restart",
-        status: "pending",
-      });
+      it("loads persisted history after app restart", async () => {
+        mocks.runtimeAvailable = true;
+        mocks.createDownloadJobMock.mockResolvedValueOnce({
+          jobId: "job-history-restart",
+          status: "pending",
+        });
       mocks.getJobMock.mockResolvedValueOnce({
         jobId: "job-history-restart",
         status: "success",
@@ -1029,23 +1049,24 @@ import { App } from "../app/App";
 
       const firstRender = render(<App />);
 
-      fireEvent.change(screen.getByLabelText("Download location"), {
-        target: { value: "D:\\Media\\DouyinDownloads" },
-      });
-      fireEvent.change(screen.getByLabelText("Douyin URL"), {
-        target: { value: "https://www.douyin.com/video/history-restart" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Start download" }));
+        fireEvent.change(screen.getByLabelText("Douyin URL"), {
+          target: { value: "https://www.douyin.com/video/history-restart" },
+        });
+        await waitFor(() => {
+          expect(screen.getByRole("button", { name: "Start download" })).toBeEnabled();
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Start download" }));
 
-      await waitFor(() => {
-        expect(screen.getByText("Download finished successfully.")).toBeInTheDocument();
-      });
-      expect(screen.getByText("https://www.douyin.com/video/history-restart")).toBeInTheDocument();
+        await waitFor(() => {
+          expect(screen.getByText("Download finished successfully.")).toBeInTheDocument();
+        });
+        expect(screen.getByText("https://www.douyin.com/video/history-restart")).toBeInTheDocument();
 
-      firstRender.unmount();
+        firstRender.unmount();
+        window.localStorage.clear();
 
-      render(<App />);
-      const historyPanel = screen.getByRole("region", { name: "History panel" });
+        render(<App />);
+        const historyPanel = screen.getByRole("region", { name: "History panel" });
       await waitFor(() => {
         expect(within(historyPanel).getByText("https://www.douyin.com/video/history-restart")).toBeInTheDocument();
       });

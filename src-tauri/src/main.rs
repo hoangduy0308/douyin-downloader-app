@@ -13,7 +13,9 @@ fn main() {
             backend::cookie_capture_and_commit,
             backend::open_output_folder,
             backend::settings_ensure_directory,
-            backend::settings_write_config_atomic
+            backend::settings_write_config_atomic,
+            backend::settings_read_text_file,
+            backend::settings_write_text_file_atomic
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

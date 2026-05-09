@@ -49,8 +49,10 @@ import {
   ensureRuntimeDirectory,
   isTauriRuntimeAvailable,
   openOutputFolder,
+  readRuntimeStateFile,
   resolveManagedConfigPath,
   TauriBackendRuntime,
+  writeRuntimeStateFileAtomic,
   writeManagedConfigAtomic,
 } from "../services/tauriBackendRuntime";
 
@@ -66,12 +68,14 @@ const EMPTY_BATCH_TOTALS: BatchQueueTotals = {
   readyToSubmit: 0,
 };
 const OUTPUT_PATH_STORAGE_KEY = "douyin-downloader-app.output-path";
+const OUTPUT_PATH_RUNTIME_FILE_NAME = "output-path.txt";
 const FALLBACK_MANAGED_CONFIG_PATH = "C:\\DouyinDownloaderApp\\runtime\\managed-config.yml";
 const DEFAULT_OUTPUT_PATH = "C:\\DouyinDownloads";
 const SINGLE_RETRY_GUIDANCE = "Retry this job after cookie recovery.";
 const BATCH_RETRY_GUIDANCE = "Use Retry failed or row Retry after cookie recovery.";
 const COOKIE_FALLBACK_GUIDANCE = "Manual/import cookie fallback remains available.";
 const HISTORY_STORAGE_KEY = "douyin-downloader-app.history.v1";
+const HISTORY_RUNTIME_FILE_NAME = "history.v1.json";
 
 interface BackendLaunchConfig {
   mode: BackendRuntimeMode;
@@ -121,15 +125,50 @@ function resolveBackendLaunchConfig(): BackendLaunchConfig {
 
 const BACKEND_LAUNCH_CONFIG = resolveBackendLaunchConfig();
 
-function readPersistedOutputPathFromStorage(): string {
+function readFromBrowserStorage(key: string): string | null {
   if (typeof window === "undefined" || !window.localStorage) {
+    return null;
+  }
+  return window.localStorage.getItem(key);
+}
+
+function writeToBrowserStorage(key: string, value: string): void {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  window.localStorage.setItem(key, value);
+}
+
+function resolveRuntimeStatePathFromManagedConfigPath(
+  managedConfigPath: string,
+  fileName: string,
+): string {
+  const normalized = managedConfigPath.replace(/\//g, "\\");
+  const separatorIndex = normalized.lastIndexOf("\\");
+  if (separatorIndex <= 0) {
+    return `${normalized}\\${fileName}`;
+  }
+  return `${normalized.slice(0, separatorIndex)}\\${fileName}`;
+}
+
+async function resolveRuntimeStatePath(fileName: string): Promise<string> {
+  const managedConfigPath = await resolveManagedConfigPath(FALLBACK_MANAGED_CONFIG_PATH);
+  return resolveRuntimeStatePathFromManagedConfigPath(managedConfigPath, fileName);
+}
+
+async function readPersistedOutputPath(): Promise<string> {
+  if (isTauriRuntimeAvailable()) {
+    const outputPathStateFile = await resolveRuntimeStatePath(OUTPUT_PATH_RUNTIME_FILE_NAME);
+    const persisted = await readRuntimeStateFile(outputPathStateFile);
+    if (persisted && persisted.trim().length > 0) {
+      return persisted.trim();
+    }
+  }
+  const browserPersisted = readFromBrowserStorage(OUTPUT_PATH_STORAGE_KEY);
+  if (!browserPersisted || browserPersisted.trim().length === 0) {
     return DEFAULT_OUTPUT_PATH;
   }
-  const persisted = window.localStorage.getItem(OUTPUT_PATH_STORAGE_KEY);
-  if (!persisted) {
-    return DEFAULT_OUTPUT_PATH;
-  }
-  return persisted;
+  return browserPersisted;
 }
 
 function createRuntimeSettingsWriter(): RuntimeConfigWriter {
@@ -138,7 +177,7 @@ function createRuntimeSettingsWriter(): RuntimeConfigWriter {
       return resolveManagedConfigPath(FALLBACK_MANAGED_CONFIG_PATH);
     },
     async resolveDefaultOutputPath(): Promise<string> {
-      return readPersistedOutputPathFromStorage();
+      return readPersistedOutputPath();
     },
     async ensureDirectory(path: string): Promise<void> {
       await ensureRuntimeDirectory(path);
@@ -147,10 +186,12 @@ function createRuntimeSettingsWriter(): RuntimeConfigWriter {
       await writeManagedConfigAtomic(path, contents);
     },
     async persistOutputPath(path: string): Promise<void> {
-      if (typeof window === "undefined" || !window.localStorage) {
+      if (isTauriRuntimeAvailable()) {
+        const outputPathStateFile = await resolveRuntimeStatePath(OUTPUT_PATH_RUNTIME_FILE_NAME);
+        await writeRuntimeStateFileAtomic(outputPathStateFile, path);
         return;
       }
-      window.localStorage.setItem(OUTPUT_PATH_STORAGE_KEY, path);
+      writeToBrowserStorage(OUTPUT_PATH_STORAGE_KEY, path);
     },
   };
 }
@@ -158,16 +199,19 @@ function createRuntimeSettingsWriter(): RuntimeConfigWriter {
 function createHistoryFileStore(): HistoryFileStore {
   return {
     async read(): Promise<string | null> {
-      if (typeof window === "undefined" || !window.localStorage) {
-        return null;
+      if (isTauriRuntimeAvailable()) {
+        const historyStateFile = await resolveRuntimeStatePath(HISTORY_RUNTIME_FILE_NAME);
+        return readRuntimeStateFile(historyStateFile);
       }
-      return window.localStorage.getItem(HISTORY_STORAGE_KEY);
+      return readFromBrowserStorage(HISTORY_STORAGE_KEY);
     },
     async write(nextContents: string): Promise<void> {
-      if (typeof window === "undefined" || !window.localStorage) {
+      if (isTauriRuntimeAvailable()) {
+        const historyStateFile = await resolveRuntimeStatePath(HISTORY_RUNTIME_FILE_NAME);
+        await writeRuntimeStateFileAtomic(historyStateFile, nextContents);
         return;
       }
-      window.localStorage.setItem(HISTORY_STORAGE_KEY, nextContents);
+      writeToBrowserStorage(HISTORY_STORAGE_KEY, nextContents);
     },
   };
 }
@@ -175,7 +219,7 @@ function createHistoryFileStore(): HistoryFileStore {
 export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>("single");
   const [url, setUrl] = useState("");
-  const [outputPath, setOutputPath] = useState(readPersistedOutputPathFromStorage());
+  const [outputPath, setOutputPath] = useState(DEFAULT_OUTPUT_PATH);
   const [advancedOptionsExpanded, setAdvancedOptionsExpanded] = useState(false);
   const [advancedOptions, setAdvancedOptions] = useState<RuntimeAdvancedOptions>(
     createDefaultRuntimeAdvancedOptions(),

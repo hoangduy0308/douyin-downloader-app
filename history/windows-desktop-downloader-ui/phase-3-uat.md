@@ -30,6 +30,13 @@
 | Backend readiness after config-generation change | Focused readiness tests + backend lifecycle test. | Submit paths remain blocked until backend is ready for current config generation and health endpoint returns ready. | Covered by passing focused tests for config-version wait, restart gating, and `/api/v1/health` readiness transition. | `phase3-runtime-readiness.log` | No |
 | Live runtime cookie capture / desktop-managed runtime proof | Real Tauri runtime exercise with live cookie fetch boundary. | Live runtime proof should be captured if available; otherwise explicitly scoped as unavailable. | Not executed in this bounded bead run. This evidence pack is deterministic test/build proof only and does not claim live cookie capture or packaged runtime behavior. | N/A | **Scoped blocker (explicit): live runtime proof unavailable in this bead run** |
 
+## Persistence Storage Location Contract
+
+- Desktop runtime persistence is app-owned and file-backed under the managed runtime directory resolved by `backend_runtime_paths` (`...\\runtime\\managed-config.yml`).
+- Output folder default is persisted to `...\\runtime\\output-path.txt`.
+- Basic history is persisted to `...\\runtime\\history.v1.json`.
+- Portable/package UAT must verify these files survive restart and are independent from WebView `localStorage`.
+
 ## Proof Surface Disclosure
 
 - **Deterministic test surface (available):** All evidence above comes from Vitest-based integration/unit flows and production build output.

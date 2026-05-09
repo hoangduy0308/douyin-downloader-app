@@ -132,6 +132,19 @@ pub struct SettingsWriteConfigAtomicRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SettingsReadTextFileRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsWriteTextFileAtomicRequest {
+    pub path: String,
+    pub contents: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CookieCaptureAndCommitRequest {
     pub backend_root: String,
     pub managed_config_path: String,
@@ -634,6 +647,50 @@ pub fn settings_write_config_atomic(request: SettingsWriteConfigAtomicRequest) -
     write_file_atomic(&target_path, &request.contents, "managed-config")
 }
 
+#[tauri::command]
+pub fn settings_read_text_file(request: SettingsReadTextFileRequest) -> Result<Option<String>, String> {
+    let path = request.path.trim().to_owned();
+    if path.is_empty() {
+        return Err("Text file path is empty".to_owned());
+    }
+    let target_path = PathBuf::from(&path);
+    if !target_path.is_absolute() {
+        return Err(format!("Text file path must be absolute: {}", path));
+    }
+
+    match fs::read_to_string(&target_path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Failed to read text file '{}': {}", path, error)),
+    }
+}
+
+#[tauri::command]
+pub fn settings_write_text_file_atomic(
+    request: SettingsWriteTextFileAtomicRequest,
+) -> Result<(), String> {
+    let path = request.path.trim().to_owned();
+    if path.is_empty() {
+        return Err("Text file path is empty".to_owned());
+    }
+    let target_path = PathBuf::from(&path);
+    if !target_path.is_absolute() {
+        return Err(format!("Text file path must be absolute: {}", path));
+    }
+
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to ensure runtime text file directory '{}': {}",
+                parent.display(),
+                error
+            )
+        })?;
+    }
+
+    write_file_atomic(&target_path, &request.contents, "runtime-state")
+}
+
 fn write_file_atomic(target_path: &Path, contents: &str, temp_label: &str) -> Result<(), String> {
     write_file_atomic_with_commit(target_path, contents, temp_label, |from, to| fs::rename(from, to))
 }
@@ -936,9 +993,13 @@ mod tests {
         build_cookie_process_failure_response, commit_cookies_to_managed_config,
         missing_required_cookie_keys, parse_cookie_capture_json_map, push_bounded_diagnostic,
         resolve_cookie_capture_output_path, resolve_sidecar_executable_from_roots,
+        settings_read_text_file,
         settings_write_config_atomic,
+        settings_write_text_file_atomic,
         write_file_atomic_with_commit, BackendDiagnostic, CookieProcessFailureKind,
+        SettingsReadTextFileRequest,
         SettingsWriteConfigAtomicRequest, BACKEND_DIAGNOSTICS_CAP,
+        SettingsWriteTextFileAtomicRequest,
     };
     use std::collections::BTreeMap;
     use std::fs;
@@ -1088,6 +1149,40 @@ mod tests {
                 .expect("relative-path error")
                 .contains("must be absolute")
         );
+    }
+
+    #[test]
+    fn settings_write_text_file_atomic_persists_and_settings_read_text_file_loads() {
+        let root = create_test_directory("settings_write_text_file_atomic_persists_and_settings_read_text_file_loads");
+        let target = root.join("runtime-state.txt");
+
+        let write_result = settings_write_text_file_atomic(SettingsWriteTextFileAtomicRequest {
+            path: target.display().to_string(),
+            contents: "persisted-output-path".to_owned(),
+        });
+        assert!(write_result.is_ok());
+
+        let read_result = settings_read_text_file(SettingsReadTextFileRequest {
+            path: target.display().to_string(),
+        });
+        assert!(read_result.is_ok());
+        assert_eq!(
+            read_result.expect("read result"),
+            Some("persisted-output-path".to_owned())
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn settings_read_text_file_returns_none_for_missing_path() {
+        let root = create_test_directory("settings_read_text_file_returns_none_for_missing_path");
+        let target = root.join("missing-runtime-state.txt");
+        let result = settings_read_text_file(SettingsReadTextFileRequest {
+            path: target.display().to_string(),
+        });
+        assert!(result.is_ok());
+        assert_eq!(result.expect("read result"), None);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

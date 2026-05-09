@@ -32,6 +32,19 @@ interface SettingsWriteConfigAtomicPayload {
   };
 }
 
+interface SettingsReadTextFilePayload {
+  request: {
+    path: string;
+  };
+}
+
+interface SettingsWriteTextFileAtomicPayload {
+  request: {
+    path: string;
+    contents: string;
+  };
+}
+
 interface RuntimePathsResponse {
   managedConfigPath: string;
 }
@@ -122,6 +135,30 @@ export async function writeManagedConfigAtomic(path: string, contents: string): 
       contents,
     },
   } satisfies SettingsWriteConfigAtomicPayload);
+}
+
+export async function readRuntimeStateFile(path: string): Promise<string | null> {
+  if (!isTauri()) {
+    return null;
+  }
+  const contents = await invoke<string | null>("settings_read_text_file", {
+    request: {
+      path,
+    },
+  } satisfies SettingsReadTextFilePayload);
+  return contents ?? null;
+}
+
+export async function writeRuntimeStateFileAtomic(path: string, contents: string): Promise<void> {
+  if (!isTauri()) {
+    return;
+  }
+  await invoke("settings_write_text_file_atomic", {
+    request: {
+      path,
+      contents,
+    },
+  } satisfies SettingsWriteTextFileAtomicPayload);
 }
 
 export async function captureAndCommitCookies(request: {

@@ -1,29 +1,29 @@
 ﻿{
     "schema_version":  "1.1",
     "feature_slug":  "windows-desktop-downloader-ui",
-    "mode":  "swarming",
-    "active_skill":  "swarming",
-    "phase":  "swarming-review-p1-runtime-health",
-    "phase_number":  3,
+    "mode":  "standard",
+    "active_skill":  "reviewing",
+    "phase":  "review-phase4-awaiting-closeout-decision",
+    "phase_number":  4,
     "epic_id":  "douyin-downloader-app-irx",
     "approved_gates":  {
                            "context":  true,
                            "phase_plan":  true,
                            "execution":  true,
-                           "review":  true
+                           "review":  false
                        },
     "active_beads":  [
-                         "douyin-downloader-app-irx.32"
+
                      ],
     "active_workers":  [
 
                        ],
     "blockers":  [
-                     "P1 review blocker douyin-downloader-app-irx.32: final tauri dev smoke did not reach http://127.0.0.1:8787/api/v1/health within 120 seconds."
+
                  ],
-    "focus":  "execute-douyin-downloader-app-irx.32",
-    "summary":  "Swarming in progress for review P1 runtime health blocker on bead douyin-downloader-app-irx.32.",
-    "next_action":  "Run worker on bead douyin-downloader-app-irx.32, then re-run review closeout checks.",
+    "focus":  "douyin-downloader-app-irx",
+    "summary":  "Review Phase 4 checks are green: epic children closed, prior P1/P2/P3 review beads closed, npm test passed, npm run test:tauri passed, npm run build passed, and git diff --check reported only the expected line-ending warning for this state file.",
+    "next_action":  "Choose closeout path: create PR, merge directly, keep branch for further work, or discard branch.",
     "deferred_beads":  [
 
                        ],
@@ -33,5 +33,5 @@
                                  "learnings_file":  "history/learnings/20260508-desktop-queue-proof.md",
                                  "critical_promotions":  3
                              },
-    "last_updated":  "2026-05-09T09:31:31.2603727Z"
+    "last_updated":  "2026-05-09T10:51:00Z"
 }

@@ -34,7 +34,7 @@ export function SingleDownloadPanel({
         </button>
       </div>
       <p className={messageTone === "error" ? "error-text" : "hint"}>
-        {message ?? "Submission wiring lands after backend readiness and typed API client beads."}
+        {message ?? "Paste one Douyin video or note URL, then start the download when the backend is ready."}
       </p>
     </section>
   );

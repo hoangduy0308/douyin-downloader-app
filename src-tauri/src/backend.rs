@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
@@ -12,6 +12,7 @@ use tauri::Manager;
 const BACKEND_DIAGNOSTICS_CAP: usize = 500;
 const REQUIRED_COOKIE_KEYS: [&str; 4] = ["msToken", "ttwid", "odin_tt", "passport_csrf_token"];
 const COOKIE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(120);
+const COOKIE_CAPTURE_CONFIRMATION_DELAY: Duration = Duration::from_secs(45);
 const SIDECAR_BINARY_NAMES: [&str; 3] = [
     "douyin-backend-sidecar-entry.exe",
     "douyin-backend-sidecar.exe",
@@ -134,7 +135,6 @@ pub struct SettingsWriteConfigAtomicRequest {
 pub struct CookieCaptureAndCommitRequest {
     pub backend_root: String,
     pub managed_config_path: String,
-    pub output_path: String,
     pub python_executable: Option<String>,
     pub browser: Option<String>,
 }
@@ -422,17 +422,6 @@ pub fn cookie_capture_and_commit(
         });
     }
 
-    let output_path = PathBuf::from(request.output_path.trim());
-    if !output_path.is_absolute() {
-        return Ok(CookieCaptureAndCommitResponse {
-            status: "failed".to_owned(),
-            exit_code: None,
-            diagnostics: Vec::new(),
-            cookies: None,
-            error: Some("Cookie output path must be absolute.".to_owned()),
-        });
-    }
-
     let managed_config_path = PathBuf::from(request.managed_config_path.trim());
     if !managed_config_path.is_absolute() {
         return Ok(CookieCaptureAndCommitResponse {
@@ -444,15 +433,7 @@ pub fn cookie_capture_and_commit(
         });
     }
 
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "Failed to ensure cookie output directory '{}': {}",
-                parent.display(),
-                error
-            )
-        })?;
-    }
+    let output_path = resolve_cookie_capture_output_path(&managed_config_path)?;
 
     let python_executable = request.python_executable.unwrap_or_else(|| "python".to_owned());
     let browser = request.browser.unwrap_or_else(|| "chromium".to_owned());
@@ -471,7 +452,7 @@ pub fn cookie_capture_and_commit(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let child = match command.spawn() {
+    let mut child = match command.spawn() {
         Ok(spawned) => spawned,
         Err(error) => {
             return Ok(CookieCaptureAndCommitResponse {
@@ -484,6 +465,8 @@ pub fn cookie_capture_and_commit(
         }
     };
 
+    let auto_confirm_scheduled =
+        schedule_cookie_capture_confirmation(&mut child, COOKIE_CAPTURE_CONFIRMATION_DELAY);
     let (output, mut diagnostics) = match wait_for_cookie_process(child, COOKIE_CAPTURE_TIMEOUT)? {
         CookieProcessWait::Completed(output) => {
             let diagnostics = diagnostics_from_process_output(&output);
@@ -497,6 +480,11 @@ pub fn cookie_capture_and_commit(
             ));
         }
     };
+    if auto_confirm_scheduled {
+        diagnostics.push(
+            "Cookie capture is app-managed. Complete login in the opened browser window; capture continues automatically.".to_owned(),
+        );
+    }
 
     let exit_code = output.status.code();
     if !output.status.success() {
@@ -524,42 +512,18 @@ pub fn cookie_capture_and_commit(
         }
     };
 
-    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
-        Ok(value) => value,
+    let cookies = match parse_cookie_capture_json_map(&raw) {
+        Ok(cookies) => cookies,
         Err(error) => {
             return Ok(CookieCaptureAndCommitResponse {
                 status: "failed".to_owned(),
                 exit_code,
                 diagnostics,
                 cookies: None,
-                error: Some(format!("Cookie output JSON is invalid: {}", error)),
+                error: Some(error),
             });
         }
     };
-
-    let cookies_object = match parsed.as_object() {
-        Some(value) => value,
-        None => {
-            return Ok(CookieCaptureAndCommitResponse {
-                status: "failed".to_owned(),
-                exit_code,
-                diagnostics,
-                cookies: None,
-                error: Some("Cookie output JSON must be an object.".to_owned()),
-            });
-        }
-    };
-
-    let mut cookies = BTreeMap::new();
-    for (key, value) in cookies_object {
-        if let Some(string_value) = value.as_str() {
-            let clean_key = key.trim().to_owned();
-            let clean_value = string_value.trim().to_owned();
-            if !clean_key.is_empty() && !clean_value.is_empty() {
-                cookies.insert(clean_key, clean_value);
-            }
-        }
-    }
 
     let missing = missing_required_cookie_keys(&cookies);
     if !missing.is_empty() {
@@ -582,6 +546,32 @@ pub fn cookie_capture_and_commit(
         cookies: Some(cookies),
         error: None,
     })
+}
+
+fn resolve_cookie_capture_output_path(managed_config_path: &Path) -> Result<PathBuf, String> {
+    let runtime_directory = managed_config_path.parent().ok_or_else(|| {
+        "Managed config path must include a parent directory for cookie capture.".to_owned()
+    })?;
+    fs::create_dir_all(runtime_directory).map_err(|error| {
+        format!(
+            "Failed to ensure cookie runtime directory '{}': {}",
+            runtime_directory.display(),
+            error
+        )
+    })?;
+    Ok(runtime_directory.join("cookies.capture.json"))
+}
+
+fn schedule_cookie_capture_confirmation(child: &mut Child, delay: Duration) -> bool {
+    let Some(mut stdin) = child.stdin.take() else {
+        return false;
+    };
+    thread::spawn(move || {
+        thread::sleep(delay);
+        let _ = stdin.write_all(b"\n");
+        let _ = stdin.flush();
+    });
+    true
 }
 
 #[tauri::command]
@@ -785,7 +775,27 @@ fn commit_cookies_to_managed_config(
             managed_config_path.display(),
             error
         )
-    })
+      })
+}
+
+fn parse_cookie_capture_json_map(raw_json: &str) -> Result<BTreeMap<String, String>, String> {
+    let parsed: serde_json::Value = serde_json::from_str(raw_json)
+        .map_err(|error| format!("Cookie output JSON is invalid: {}", error))?;
+    let cookies_object = parsed
+        .as_object()
+        .ok_or_else(|| "Cookie output JSON must be an object.".to_owned())?;
+
+    let mut cookies = BTreeMap::new();
+    for (key, value) in cookies_object {
+        if let Some(string_value) = value.as_str() {
+            let clean_key = key.trim().to_owned();
+            let clean_value = string_value.trim().to_owned();
+            if !clean_key.is_empty() && !clean_value.is_empty() {
+                cookies.insert(clean_key, clean_value);
+            }
+        }
+    }
+    Ok(cookies)
 }
 
 fn wait_for_cookie_process(mut child: Child, timeout: Duration) -> Result<CookieProcessWait, String> {
@@ -924,8 +934,10 @@ fn push_bounded_diagnostic(diagnostics: &mut Vec<BackendDiagnostic>, entry: Back
 mod tests {
     use super::{
         build_cookie_process_failure_response, commit_cookies_to_managed_config,
-        missing_required_cookie_keys, push_bounded_diagnostic, resolve_sidecar_executable_from_roots,
-        settings_write_config_atomic, write_file_atomic_with_commit, BackendDiagnostic, CookieProcessFailureKind,
+        missing_required_cookie_keys, parse_cookie_capture_json_map, push_bounded_diagnostic,
+        resolve_cookie_capture_output_path, resolve_sidecar_executable_from_roots,
+        settings_write_config_atomic,
+        write_file_atomic_with_commit, BackendDiagnostic, CookieProcessFailureKind,
         SettingsWriteConfigAtomicRequest, BACKEND_DIAGNOSTICS_CAP,
     };
     use std::collections::BTreeMap;
@@ -1030,6 +1042,19 @@ mod tests {
     }
 
     #[test]
+    fn resolves_cookie_capture_output_path_inside_managed_runtime_directory() {
+        let root = create_test_directory("resolves_cookie_capture_output_path_inside_managed_runtime_directory");
+        let runtime = root.join("runtime");
+        let managed_config_path = runtime.join("managed-config.yml");
+        let resolved =
+            resolve_cookie_capture_output_path(&managed_config_path).expect("resolve cookie capture output path");
+
+        assert_eq!(resolved, runtime.join("cookies.capture.json"));
+        assert!(runtime.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn settings_write_config_atomic_replaces_existing_file() {
         let root = create_test_directory("settings_write_config_atomic_replaces_existing_file");
         let target = root.join("managed-config.yml");
@@ -1047,6 +1072,22 @@ mod tests {
         );
         assert_no_managed_config_temp_files(&root);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_relative_managed_config_path_for_settings_write() {
+        let result = settings_write_config_atomic(SettingsWriteConfigAtomicRequest {
+            path: "managed-config.yml".to_owned(),
+            contents: "new: value\n".to_owned(),
+        });
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .expect("relative-path error")
+                .contains("must be absolute")
+        );
     }
 
     #[test]
@@ -1079,6 +1120,69 @@ mod tests {
         assert_eq!(stored_cookie, Some("token-a"));
         assert_no_managed_config_temp_files(&root);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_invalid_existing_yaml_when_committing_cookies() {
+        let root = create_test_directory("rejects_invalid_existing_yaml_when_committing_cookies");
+        let target = root.join("managed-config.yml");
+        fs::write(&target, "output: [").expect("seed invalid managed config");
+
+        let mut cookies = BTreeMap::new();
+        cookies.insert("msToken".to_owned(), "token-a".to_owned());
+        cookies.insert("ttwid".to_owned(), "token-b".to_owned());
+        cookies.insert("odin_tt".to_owned(), "token-c".to_owned());
+        cookies.insert("passport_csrf_token".to_owned(), "token-d".to_owned());
+
+        let result = commit_cookies_to_managed_config(&target, &cookies);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .expect("invalid-yaml error")
+                .contains("invalid YAML")
+        );
+        assert_eq!(
+            fs::read_to_string(&target).expect("read original invalid config"),
+            "output: ["
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_malformed_cookie_capture_json() {
+        let result = parse_cookie_capture_json_map("{");
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .expect("malformed-json error")
+                .contains("invalid")
+        );
+    }
+
+    #[test]
+    fn rejects_non_object_cookie_capture_json() {
+        let result = parse_cookie_capture_json_map("[1,2,3]");
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().as_deref(),
+            Some("Cookie output JSON must be an object.")
+        );
+    }
+
+    #[test]
+    fn trims_and_filters_cookie_json_values() {
+        let result = parse_cookie_capture_json_map(
+            r#"{" msToken ":" token-a ","ttwid":" token-b ","empty":"","nonString":99}"#,
+        )
+        .expect("parse cookie json");
+
+        assert_eq!(result.get("msToken").map(String::as_str), Some("token-a"));
+        assert_eq!(result.get("ttwid").map(String::as_str), Some("token-b"));
+        assert!(!result.contains_key("empty"));
+        assert!(!result.contains_key("nonString"));
     }
 
     #[test]

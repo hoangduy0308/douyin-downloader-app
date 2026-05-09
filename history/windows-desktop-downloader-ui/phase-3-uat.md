@@ -12,6 +12,7 @@
 | Command | Expected | Actual | Evidence |
 |---|---|---|---|
 | `npm test` | Whole app suite passes for Phase 3 gate. | Passed (`12 files`, `95 tests`). | `history/windows-desktop-downloader-ui/evidence/phase3-tests.log` |
+| `npm run test:tauri` | Native Tauri command/unit boundary tests pass for config writes, cookie parsing/validation, and merge/error paths. | Passed (`src-tauri backend tests`). | Local command output during bead `douyin-downloader-app-br1` |
 | `npm run build` | Production build succeeds. | Passed (`tsc && vite build`). | `history/windows-desktop-downloader-ui/evidence/phase3-build.log` |
 | `npm test -- src/tests/app-shell.test.tsx --reporter verbose` | UI integration proofs for settings/history/cookie/log separation pass. | Passed (`32 tests`). | `history/windows-desktop-downloader-ui/evidence/phase3-app-shell-verbose.log` |
 | `npm test -- src/tests/settings-store.test.ts src/tests/history-store.test.ts src/tests/backend-lifecycle.test.ts --reporter verbose` | Persistence and managed-backend readiness unit/integration proofs pass. | Passed (`17 tests`). | `history/windows-desktop-downloader-ui/evidence/phase3-settings-history-verbose.log` |
@@ -32,6 +33,7 @@
 ## Proof Surface Disclosure
 
 - **Deterministic test surface (available):** All evidence above comes from Vitest-based integration/unit flows and production build output.
+- **Native command surface (available):** `npm run test:tauri` covers Rust-side command behavior for atomic config write paths, relative-path rejection, malformed cookie JSON rejection, required-key checks, invalid existing YAML handling, and config merge preservation.
 - **Dev-runtime managed-backend behavior (available):** Readiness gating and health transition are proven through app-shell/backend-lifecycle tests with explicit focused commands.
 - **Live cookie/runtime surface (unavailable in this bead):** No real browser-driven cookie capture session or packaged desktop runtime session was executed here; this is intentionally disclosed as scoped-blocked, not greened.
 

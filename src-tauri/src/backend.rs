@@ -7,10 +7,16 @@ use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::Manager;
 
 const BACKEND_DIAGNOSTICS_CAP: usize = 500;
 const REQUIRED_COOKIE_KEYS: [&str; 4] = ["msToken", "ttwid", "odin_tt", "passport_csrf_token"];
 const COOKIE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(120);
+const SIDECAR_BINARY_NAMES: [&str; 3] = [
+    "douyin-backend-sidecar-entry.exe",
+    "douyin-backend-sidecar.exe",
+    "douyin-backend.exe",
+];
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BackendDiagnostic {
@@ -98,6 +104,12 @@ pub struct BackendStopResponse {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendRuntimePathsResponse {
+    pub managed_config_path: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenOutputFolderRequest {
@@ -152,6 +164,7 @@ enum CookieProcessWait {
 pub fn backend_start(
     request: BackendStartRequest,
     manager: tauri::State<BackendManager>,
+    app_handle: tauri::AppHandle,
 ) -> Result<BackendStartResponse, String> {
     manager.clear_diagnostics();
     manager.push_diagnostic(
@@ -185,49 +198,73 @@ pub fn backend_start(
         });
     }
 
-    if request.mode != "dev-python" {
-        return Err(format!("Unsupported backend mode: {}", request.mode));
-    }
-
     if !Path::new(&request.output_path).is_absolute() {
         return Err("outputPath must be absolute for managed backend startup".to_owned());
     }
+    let mode = request.mode.clone();
+    let mut command;
+    let lifecycle_message;
+    if mode == "dev-python" {
+        let backend_root = request
+            .backend_root
+            .clone()
+            .ok_or_else(|| "backendRoot is required for dev-python mode".to_owned())?;
+        if !Path::new(&backend_root).exists() {
+            return Err(format!("backendRoot does not exist: {}", backend_root));
+        }
 
-    let backend_root = request
-        .backend_root
-        .clone()
-        .ok_or_else(|| "backendRoot is required for dev-python mode".to_owned())?;
-    if !Path::new(&backend_root).exists() {
-        return Err(format!("backendRoot does not exist: {}", backend_root));
+        let python_executable = request.python_executable.unwrap_or_else(|| "python".to_owned());
+        command = Command::new(&python_executable);
+        command
+            .env("PYTHONUTF8", "1")
+            .env("PYTHONIOENCODING", "utf-8")
+            .arg("run.py")
+            .arg("--serve")
+            .arg("--serve-host")
+            .arg(&request.host)
+            .arg("--serve-port")
+            .arg(request.port.to_string())
+            .arg("--config")
+            .arg(&request.config_path)
+            .arg("--path")
+            .arg(&request.output_path)
+            .current_dir(&backend_root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        lifecycle_message = format!(
+            "Spawning dev-python backend command: {} run.py --serve --serve-host {} --serve-port {} --config <managed> --path <absolute-output> (PYTHONUTF8=1, PYTHONIOENCODING=utf-8)",
+            python_executable, request.host, request.port
+        );
+    } else if mode == "managed-sidecar" {
+        let sidecar_path = resolve_sidecar_executable(&app_handle)?;
+        command = Command::new(&sidecar_path);
+        command
+            .arg("--serve-host")
+            .arg(&request.host)
+            .arg("--serve-port")
+            .arg(request.port.to_string())
+            .arg("--config")
+            .arg(&request.config_path)
+            .arg("--path")
+            .arg(&request.output_path)
+            .current_dir(
+                sidecar_path
+                    .parent()
+                    .ok_or_else(|| "sidecar executable has no parent directory".to_owned())?,
+            )
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        lifecycle_message = format!(
+            "Spawning managed sidecar backend command: {} --serve-host {} --serve-port {} --config <managed> --path <absolute-output>",
+            sidecar_path.display(),
+            request.host,
+            request.port
+        );
+    } else {
+        return Err(format!("Unsupported backend mode: {}", request.mode));
     }
 
-    let python_executable = request.python_executable.unwrap_or_else(|| "python".to_owned());
-    let mut command = Command::new(&python_executable);
-    command
-        .env("PYTHONUTF8", "1")
-        .env("PYTHONIOENCODING", "utf-8")
-        .arg("run.py")
-        .arg("--serve")
-        .arg("--serve-host")
-        .arg(&request.host)
-        .arg("--serve-port")
-        .arg(request.port.to_string())
-        .arg("--config")
-        .arg(&request.config_path)
-        .arg("--path")
-        .arg(&request.output_path)
-        .current_dir(&backend_root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    manager.push_diagnostic(
-        "info",
-        "lifecycle",
-        format!(
-            "Spawning managed backend command: {} run.py --serve --serve-host {} --serve-port {} --config <managed> --path <absolute-output> (PYTHONUTF8=1, PYTHONIOENCODING=utf-8)",
-            python_executable, request.host, request.port
-        ),
-    );
+    manager.push_diagnostic("info", "lifecycle", lifecycle_message);
 
     let mut child = command
         .spawn()
@@ -252,6 +289,16 @@ pub fn backend_start(
         port: request.port,
         managed: true,
         message: "Managed backend process started".to_owned(),
+    })
+}
+
+#[tauri::command]
+pub fn backend_runtime_paths(
+    app_handle: tauri::AppHandle,
+) -> Result<BackendRuntimePathsResponse, String> {
+    let managed_config_path = resolve_managed_config_path(&app_handle)?;
+    Ok(BackendRuntimePathsResponse {
+        managed_config_path: managed_config_path.display().to_string(),
     })
 }
 
@@ -289,6 +336,63 @@ pub fn backend_diagnostics(manager: tauri::State<BackendManager>) -> Result<Vec<
         .lock()
         .map_err(|_| "backend diagnostics mutex poisoned".to_owned())?;
     Ok(diagnostics.clone())
+}
+
+fn resolve_managed_config_path(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(app_data) = app_handle.path().app_local_data_dir() {
+        return Ok(app_data.join("runtime").join("managed-config.yml"));
+    }
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Failed to resolve current executable path: {error}"))?;
+    let executable_directory = executable
+        .parent()
+        .ok_or_else(|| "Current executable path has no parent directory".to_owned())?;
+    Ok(executable_directory
+        .join(".runtime")
+        .join("managed-config.yml"))
+}
+
+fn resolve_sidecar_executable(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        roots.push(resource_dir);
+    }
+
+    if let Some(path) = resolve_sidecar_executable_from_roots(&roots) {
+        return Ok(path);
+    }
+
+    let searched = roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "Managed sidecar executable was not found. searchedRoots=[{}], candidates=[{}]",
+        searched,
+        SIDECAR_BINARY_NAMES.join(", ")
+    ))
+}
+
+fn resolve_sidecar_executable_from_roots(search_roots: &[PathBuf]) -> Option<PathBuf> {
+    for root in search_roots {
+        for name in SIDECAR_BINARY_NAMES {
+            let nested = root.join("backend").join(name);
+            if nested.is_file() {
+                return Some(nested);
+            }
+            let direct = root.join(name);
+            if direct.is_file() {
+                return Some(direct);
+            }
+        }
+    }
+    None
 }
 
 #[tauri::command]
@@ -820,8 +924,8 @@ fn push_bounded_diagnostic(diagnostics: &mut Vec<BackendDiagnostic>, entry: Back
 mod tests {
     use super::{
         build_cookie_process_failure_response, commit_cookies_to_managed_config,
-        missing_required_cookie_keys, push_bounded_diagnostic, settings_write_config_atomic,
-        write_file_atomic_with_commit, BackendDiagnostic, CookieProcessFailureKind,
+        missing_required_cookie_keys, push_bounded_diagnostic, resolve_sidecar_executable_from_roots,
+        settings_write_config_atomic, write_file_atomic_with_commit, BackendDiagnostic, CookieProcessFailureKind,
         SettingsWriteConfigAtomicRequest, BACKEND_DIAGNOSTICS_CAP,
     };
     use std::collections::BTreeMap;
@@ -993,6 +1097,34 @@ mod tests {
             "original: true\n"
         );
         assert_no_managed_config_temp_files(&root);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolves_sidecar_executable_from_backend_subdirectory() {
+        let root = create_test_directory("resolves_sidecar_executable_from_backend_subdirectory");
+        let backend_directory = root.join("backend");
+        fs::create_dir_all(&backend_directory).expect("create backend directory");
+        let sidecar = backend_directory.join("douyin-backend-sidecar-entry.exe");
+        fs::write(&sidecar, "stub").expect("create sidecar stub");
+
+        let resolved = resolve_sidecar_executable_from_roots(&[root.clone()]);
+
+        assert_eq!(resolved.as_deref(), Some(sidecar.as_path()));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolves_sidecar_executable_from_root_directory_when_backend_folder_is_missing() {
+        let root = create_test_directory(
+            "resolves_sidecar_executable_from_root_directory_when_backend_folder_is_missing",
+        );
+        let sidecar = root.join("douyin-backend-sidecar.exe");
+        fs::write(&sidecar, "stub").expect("create sidecar stub");
+
+        let resolved = resolve_sidecar_executable_from_roots(&[root.clone()]);
+
+        assert_eq!(resolved.as_deref(), Some(sidecar.as_path()));
         let _ = fs::remove_dir_all(&root);
     }
 

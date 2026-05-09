@@ -9,6 +9,7 @@ fn main() {
             backend::backend_start,
             backend::backend_stop,
             backend::backend_diagnostics,
+            backend::backend_runtime_paths,
             backend::cookie_capture_and_commit,
             backend::open_output_folder,
             backend::settings_ensure_directory,

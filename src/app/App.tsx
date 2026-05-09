@@ -9,7 +9,12 @@ import { SingleDownloadPanel } from "../components/SingleDownloadPanel";
 import { AdvancedOptionsPanel } from "../components/AdvancedOptionsPanel";
 import type { JobState } from "../services/backendClient";
 import { createBackendClient } from "../services/backendClient";
-import { BackendLifecycle, probeBackendHealth, wait } from "../services/backendLifecycle";
+import {
+  BackendLifecycle,
+  probeBackendHealth,
+  wait,
+  type BackendRuntimeMode,
+} from "../services/backendLifecycle";
 import { readImportedBatchText } from "../services/batchImportAdapter";
 import {
   isBatchRowRetryEligible,
@@ -44,6 +49,7 @@ import {
   ensureRuntimeDirectory,
   isTauriRuntimeAvailable,
   openOutputFolder,
+  resolveManagedConfigPath,
   TauriBackendRuntime,
   writeManagedConfigAtomic,
 } from "../services/tauriBackendRuntime";
@@ -60,13 +66,60 @@ const EMPTY_BATCH_TOTALS: BatchQueueTotals = {
   readyToSubmit: 0,
 };
 const OUTPUT_PATH_STORAGE_KEY = "douyin-downloader-app.output-path";
-const BACKEND_ROOT = "F:\\Work\\DouyinDownload\\douyin-downloader";
-const MANAGED_CONFIG_PATH = "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml";
+const FALLBACK_MANAGED_CONFIG_PATH = "C:\\DouyinDownloaderApp\\runtime\\managed-config.yml";
 const DEFAULT_OUTPUT_PATH = "C:\\DouyinDownloads";
 const SINGLE_RETRY_GUIDANCE = "Retry this job after cookie recovery.";
 const BATCH_RETRY_GUIDANCE = "Use Retry failed or row Retry after cookie recovery.";
 const COOKIE_FALLBACK_GUIDANCE = "Manual/import cookie fallback remains available.";
 const HISTORY_STORAGE_KEY = "douyin-downloader-app.history.v1";
+
+interface BackendLaunchConfig {
+  mode: BackendRuntimeMode;
+  backendRoot?: string;
+  pythonExecutable?: string;
+}
+
+function readViteEnv(name: string): string {
+  const env = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env;
+  const value = env?.[name];
+  return typeof value === "string" ? value : "";
+}
+
+function readViteEnvFlag(name: string): boolean {
+  const env = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env;
+  const value = env?.[name];
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return value === "true";
+  }
+  return false;
+}
+
+function resolveBackendLaunchConfig(): BackendLaunchConfig {
+  const requestedMode = readViteEnv("VITE_DOUYIN_BACKEND_MODE").trim().toLowerCase();
+  const devBackendRoot = readViteEnv("VITE_DOUYIN_BACKEND_ROOT").trim();
+  const configuredPythonExecutable = readViteEnv("VITE_DOUYIN_DEV_PYTHON").trim();
+  const devPythonExecutable = configuredPythonExecutable.length > 0
+    ? configuredPythonExecutable
+    : "python";
+  const isDev = readViteEnvFlag("DEV");
+
+  if (requestedMode === "dev-python" || (isDev && devBackendRoot.length > 0)) {
+    return {
+      mode: "dev-python",
+      backendRoot: devBackendRoot.length > 0 ? devBackendRoot : undefined,
+      pythonExecutable: devPythonExecutable.length > 0 ? devPythonExecutable : undefined,
+    };
+  }
+
+  return {
+    mode: "managed-sidecar",
+  };
+}
+
+const BACKEND_LAUNCH_CONFIG = resolveBackendLaunchConfig();
 
 function readPersistedOutputPathFromStorage(): string {
   if (typeof window === "undefined" || !window.localStorage) {
@@ -82,7 +135,7 @@ function readPersistedOutputPathFromStorage(): string {
 function createRuntimeSettingsWriter(): RuntimeConfigWriter {
   return {
     async resolveManagedConfigPath(): Promise<string> {
-      return MANAGED_CONFIG_PATH;
+      return resolveManagedConfigPath(FALLBACK_MANAGED_CONFIG_PATH);
     },
     async resolveDefaultOutputPath(): Promise<string> {
       return readPersistedOutputPathFromStorage();
@@ -131,6 +184,7 @@ export function App(): JSX.Element {
     "pending" | "ready" | "error"
   >("pending");
   const [configVersion, setConfigVersion] = useState(1);
+  const [managedConfigPath, setManagedConfigPath] = useState(FALLBACK_MANAGED_CONFIG_PATH);
   const [backendReadyConfigVersion, setBackendReadyConfigVersion] = useState(1);
   const [backendStatus, setBackendStatus] = useState<"starting" | "ready" | "error" | "stopped">("starting");
   const [backendDetail, setBackendDetail] = useState(
@@ -233,11 +287,12 @@ export function App(): JSX.Element {
       if (!mounted) {
         return;
       }
-      if (!outputPathManuallyEdited.current) {
-        setOutputPath(snapshot.outputPath);
-      }
-      setAdvancedOptions(snapshot.advancedOptions);
-      setConfigVersion(snapshot.configVersion);
+        if (!outputPathManuallyEdited.current) {
+          setOutputPath(snapshot.outputPath);
+        }
+        setManagedConfigPath(snapshot.configPath);
+        setAdvancedOptions(snapshot.advancedOptions);
+        setConfigVersion(snapshot.configVersion);
       setSettingsInitializationState("ready");
     }).catch((error) => {
       if (!mounted) {
@@ -275,14 +330,15 @@ export function App(): JSX.Element {
     setBackendStatus("starting");
     setBackendDetail("Starting backend and polling /api/v1/health...");
 
-    void lifecycle
-        .start({
-          mode: "dev-python",
-          host: "127.0.0.1",
-          port: 8787,
-          backendRoot: BACKEND_ROOT,
-          configPath: MANAGED_CONFIG_PATH,
-          outputPath,
+      void lifecycle
+          .start({
+            mode: BACKEND_LAUNCH_CONFIG.mode,
+            host: "127.0.0.1",
+            port: 8787,
+            backendRoot: BACKEND_LAUNCH_CONFIG.backendRoot,
+            pythonExecutable: BACKEND_LAUNCH_CONFIG.pythonExecutable,
+            configPath: managedConfigPath,
+            outputPath,
         healthTimeoutMs: 12_000,
         healthPollMs: 400,
       })
@@ -311,7 +367,7 @@ export function App(): JSX.Element {
       mounted = false;
       void lifecycle.stop();
     };
-    }, [configVersion, outputPath, settingsInitializationState, settingsStore]);
+      }, [configVersion, managedConfigPath, outputPath, settingsInitializationState, settingsStore]);
 
   useEffect(() => {
     let mounted = true;
@@ -573,10 +629,10 @@ export function App(): JSX.Element {
 
   const buildCookieRecoveryRequest = () => {
     return {
-      backendRoot: BACKEND_ROOT,
-      managedConfigPath: MANAGED_CONFIG_PATH,
+      backendRoot: BACKEND_LAUNCH_CONFIG.backendRoot ?? "",
+      managedConfigPath,
       outputPath: hasConfiguredOutputPath ? trimmedOutputPath : DEFAULT_OUTPUT_PATH,
-      pythonExecutable: "python",
+      pythonExecutable: BACKEND_LAUNCH_CONFIG.pythonExecutable,
       browser: "chromium" as const,
     };
   };

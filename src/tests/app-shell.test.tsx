@@ -1,17 +1,18 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
+  const mocks = vi.hoisted(() => ({
   createDownloadJobMock: vi.fn(),
   getJobMock: vi.fn(),
   runtimeAvailable: false,
   lifecycleStartMock: vi.fn(),
   openOutputFolderMock: vi.fn(),
   captureAndCommitCookiesMock: vi.fn(),
-  ensureRuntimeDirectoryMock: vi.fn(),
-  writeManagedConfigAtomicMock: vi.fn(),
-  readImportedBatchTextMock: vi.fn(),
-}));
+    ensureRuntimeDirectoryMock: vi.fn(),
+    writeManagedConfigAtomicMock: vi.fn(),
+    resolveManagedConfigPathMock: vi.fn(),
+    readImportedBatchTextMock: vi.fn(),
+  }));
 
 const OUTPUT_PATH_STORAGE_KEY = "douyin-downloader-app.output-path";
 
@@ -28,11 +29,13 @@ vi.mock("../services/tauriBackendRuntime", () => ({
   isTauriRuntimeAvailable: () => mocks.runtimeAvailable,
   openOutputFolder: (path: string) => mocks.openOutputFolderMock(path),
   captureAndCommitCookies: (request: unknown) => mocks.captureAndCommitCookiesMock(request),
-  ensureRuntimeDirectory: (path: string) => mocks.ensureRuntimeDirectoryMock(path),
-  writeManagedConfigAtomic: (path: string, contents: string) =>
-    mocks.writeManagedConfigAtomicMock(path, contents),
-  TauriBackendRuntime: class {},
-}));
+    ensureRuntimeDirectory: (path: string) => mocks.ensureRuntimeDirectoryMock(path),
+    writeManagedConfigAtomic: (path: string, contents: string) =>
+      mocks.writeManagedConfigAtomicMock(path, contents),
+    resolveManagedConfigPath: (fallbackPath: string) =>
+      mocks.resolveManagedConfigPathMock(fallbackPath),
+    TauriBackendRuntime: class {},
+  }));
 
 vi.mock("../services/batchImportAdapter", () => ({
   readImportedBatchText: () => mocks.readImportedBatchTextMock(),
@@ -69,9 +72,10 @@ import { App } from "../app/App";
       mocks.lifecycleStartMock.mockReset();
       mocks.openOutputFolderMock.mockReset();
       mocks.captureAndCommitCookiesMock.mockReset();
-      mocks.ensureRuntimeDirectoryMock.mockReset();
-      mocks.writeManagedConfigAtomicMock.mockReset();
-      mocks.readImportedBatchTextMock.mockReset();
+        mocks.ensureRuntimeDirectoryMock.mockReset();
+        mocks.writeManagedConfigAtomicMock.mockReset();
+        mocks.resolveManagedConfigPathMock.mockReset();
+        mocks.readImportedBatchTextMock.mockReset();
     mocks.lifecycleStartMock.mockResolvedValue({
       state: "ready",
       detail: "Backend is ready.",
@@ -84,10 +88,13 @@ import { App } from "../app/App";
         cookies: null,
         error: "tauri-runtime-unavailable",
       });
-      mocks.ensureRuntimeDirectoryMock.mockResolvedValue(undefined);
-      mocks.writeManagedConfigAtomicMock.mockResolvedValue(undefined);
-      mocks.readImportedBatchTextMock.mockResolvedValue("");
-      window.localStorage.clear();
+        mocks.ensureRuntimeDirectoryMock.mockResolvedValue(undefined);
+        mocks.writeManagedConfigAtomicMock.mockResolvedValue(undefined);
+        mocks.resolveManagedConfigPathMock.mockResolvedValue(
+          "C:\\Users\\hdi\\AppData\\Local\\DouyinDownloaderApp\\runtime\\managed-config.yml",
+        );
+        mocks.readImportedBatchTextMock.mockResolvedValue("");
+        window.localStorage.clear();
     });
 
   it("renders first-screen workflow controls with single and batch tabs", () => {
@@ -137,18 +144,42 @@ import { App } from "../app/App";
             outputPath: "D:\\Persisted\\Downloads",
           }),
       );
+      });
+  });
+
+  it("starts tauri runtime with portable managed-sidecar mode instead of workstation dev paths", async () => {
+    mocks.runtimeAvailable = true;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mocks.lifecycleStartMock).toHaveBeenCalledTimes(1);
     });
+
+    const firstStartConfig = mocks.lifecycleStartMock.mock.calls[0]?.[0] as {
+      mode: string;
+      configPath: string;
+      backendRoot?: string;
+    };
+    expect(firstStartConfig).toEqual(
+      expect.objectContaining({
+        mode: "managed-sidecar",
+      }),
+    );
+    expect(firstStartConfig.configPath).toContain("managed-config.yml");
+    expect(firstStartConfig.configPath).not.toContain("F:\\Work\\DouyinDownload");
+    expect(firstStartConfig.backendRoot).toBeUndefined();
   });
 
   it("waits for initial managed config write before starting backend lifecycle", async () => {
     mocks.runtimeAvailable = true;
     let releaseConfigWrite: (() => void) | null = null;
-    mocks.writeManagedConfigAtomicMock.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseConfigWrite = resolve;
-        }),
-    );
+      mocks.writeManagedConfigAtomicMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseConfigWrite = () => resolve();
+          }),
+      );
 
     render(<App />);
 
@@ -159,7 +190,8 @@ import { App } from "../app/App";
     expect(screen.getByRole("button", { name: "Start download" })).toBeDisabled();
     expect(screen.getByText("Start is disabled while runtime settings are initializing.")).toBeInTheDocument();
 
-    releaseConfigWrite?.();
+    const triggerConfigWrite = releaseConfigWrite as unknown as () => void;
+    triggerConfigWrite();
 
     await waitFor(() => {
       expect(mocks.lifecycleStartMock).toHaveBeenCalledTimes(1);
@@ -1132,14 +1164,14 @@ import { App } from "../app/App";
       ).toBeInTheDocument();
     });
     expect(screen.getByTestId("job-diagnostics-cache")).toHaveTextContent("stderr: capture canceled by user");
-    expect(
-      mocks.captureAndCommitCookiesMock,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        backendRoot: "F:\\Work\\DouyinDownload\\douyin-downloader",
-        managedConfigPath: "F:\\Work\\DouyinDownload\\douyin-downloader-app\\.runtime\\managed-config.yml",
-      }),
-    );
+      expect(
+        mocks.captureAndCommitCookiesMock,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          managedConfigPath:
+            "C:\\Users\\hdi\\AppData\\Local\\DouyinDownloaderApp\\runtime\\managed-config.yml",
+        }),
+      );
   });
 
   it("redacts sensitive cookie and authorization text in logs panel", async () => {

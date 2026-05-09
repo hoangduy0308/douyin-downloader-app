@@ -1,6 +1,6 @@
 export type BackendReadinessState = "starting" | "ready" | "error" | "stopped";
 
-export type BackendRuntimeMode = "dev-python" | "attach";
+export type BackendRuntimeMode = "managed-sidecar" | "dev-python" | "attach";
 
 export interface BackendDiagnostic {
   at: string;
@@ -67,7 +67,7 @@ export class BackendLifecycle {
 
   private diagnostics: BackendDiagnostic[] = [];
   private managedProcessOwned = false;
-  private activeMode: BackendRuntimeMode = "dev-python";
+  private activeMode: BackendRuntimeMode = "managed-sidecar";
 
   public constructor(
     private readonly runtime: BackendRuntime,
@@ -85,12 +85,12 @@ export class BackendLifecycle {
   public async start(config: BackendStartConfig): Promise<BackendReadiness> {
     const host = config.host ?? DEFAULT_HOST;
     const port = config.port ?? DEFAULT_PORT;
-    const mode = config.mode ?? "dev-python";
+    const mode = config.mode ?? "managed-sidecar";
     const timeoutMs = config.healthTimeoutMs ?? DEFAULT_TIMEOUT_MS;
     const pollMs = config.healthPollMs ?? DEFAULT_POLL_MS;
 
     this.activeMode = mode;
-    this.managedProcessOwned = mode === "dev-python";
+    this.managedProcessOwned = mode !== "attach";
     this.diagnostics = [];
     this.readiness = {
       state: "starting",
@@ -166,7 +166,7 @@ export class BackendLifecycle {
   }
 
   public async stop(): Promise<BackendReadiness> {
-    if (this.managedProcessOwned && this.activeMode === "dev-python") {
+    if (this.managedProcessOwned && this.activeMode !== "attach") {
       await this.runtime.stop();
       this.pushDiagnostic("info", "lifecycle", "Managed backend process stopped.");
     } else {

@@ -3,7 +3,7 @@ import type { BackendDiagnostic, BackendRuntime, BackendRuntimeStartRequest } fr
 
 interface BackendStartPayload {
   request: {
-    mode: "dev-python" | "attach";
+    mode: "managed-sidecar" | "dev-python" | "attach";
     host: string;
     port: number;
     backendRoot?: string;
@@ -30,6 +30,10 @@ interface SettingsWriteConfigAtomicPayload {
     path: string;
     contents: string;
   };
+}
+
+interface RuntimePathsResponse {
+  managedConfigPath: string;
 }
 
 interface CookieCaptureAndCommitPayload {
@@ -77,6 +81,16 @@ export class TauriBackendRuntime implements BackendRuntime {
     const diagnostics = await invoke<BackendDiagnostic[]>("backend_diagnostics");
     return diagnostics ?? [];
   }
+}
+
+export async function resolveManagedConfigPath(
+  fallbackPath: string,
+): Promise<string> {
+  if (!isTauri()) {
+    return fallbackPath;
+  }
+  const response = await invoke<RuntimePathsResponse>("backend_runtime_paths");
+  return response?.managedConfigPath ?? fallbackPath;
 }
 
 export async function openOutputFolder(path: string): Promise<void> {

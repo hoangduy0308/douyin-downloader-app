@@ -1,29 +1,37 @@
-{
-  "schema_version": "1.1",
-  "feature_slug": "",
-  "mode": "idle",
-  "active_skill": "compounding",
-  "phase": "compounding-complete",
-  "phase_number": 0,
-  "epic_id": "",
-  "approved_gates": {
-    "context": false,
-    "phase_plan": false,
-    "execution": false,
-    "review": false
-  },
-  "active_beads": [],
-  "active_workers": [],
-  "blockers": [],
-  "focus": "next-feature",
-  "summary": "Compounding complete. Learnings captured for the next feature.",
-  "next_action": "Start the next feature or reopen deferred follow-up work.",
-  "deferred_beads": [],
-  "last_compounding_run": {
-    "feature": "windows-desktop-downloader-ui",
-    "date": "2026-05-08",
-    "learnings_file": "history/learnings/20260508-desktop-queue-proof.md",
-    "critical_promotions": 3
-  },
-  "last_updated": "2026-05-08T23:59:27+07:00"
+﻿{
+    "schema_version":  "1.1",
+    "feature_slug":  "windows-desktop-downloader-ui",
+    "mode":  "swarming",
+    "active_skill":  "swarming",
+    "phase":  "swarming-review-p1-runtime-health",
+    "phase_number":  3,
+    "epic_id":  "douyin-downloader-app-irx",
+    "approved_gates":  {
+                           "context":  true,
+                           "phase_plan":  true,
+                           "execution":  true,
+                           "review":  true
+                       },
+    "active_beads":  [
+                         "douyin-downloader-app-irx.32"
+                     ],
+    "active_workers":  [
+
+                       ],
+    "blockers":  [
+                     "P1 review blocker douyin-downloader-app-irx.32: final tauri dev smoke did not reach http://127.0.0.1:8787/api/v1/health within 120 seconds."
+                 ],
+    "focus":  "execute-douyin-downloader-app-irx.32",
+    "summary":  "Swarming in progress for review P1 runtime health blocker on bead douyin-downloader-app-irx.32.",
+    "next_action":  "Run worker on bead douyin-downloader-app-irx.32, then re-run review closeout checks.",
+    "deferred_beads":  [
+
+                       ],
+    "last_compounding_run":  {
+                                 "feature":  "windows-desktop-downloader-ui",
+                                 "date":  "2026-05-08",
+                                 "learnings_file":  "history/learnings/20260508-desktop-queue-proof.md",
+                                 "critical_promotions":  3
+                             },
+    "last_updated":  "2026-05-09T09:31:31.2603727Z"
 }

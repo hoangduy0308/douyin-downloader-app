@@ -2,20 +2,14 @@
   "schema_version": "1.0",
   "plugin": "khuym",
   "plugin_version": "3.0.3",
-  "installed_at": "2026-05-07T13:11:12.193Z",
+  "installed_at": "2026-05-08T19:07:00.784Z",
   "status": "complete",
   "managed_assets": {
     "agents_mode": "updated_managed_block",
     "config_changes": [
-      "set_project_doc_max_bytes",
-      "enable_codex_hooks_feature",
-      "compact_prompt_installed"
+      "enable_codex_hooks_feature"
     ],
-    "hook_changes": [
-      "upsert_SessionStart",
-      "upsert_PreToolUse",
-      "upsert_Stop"
-    ],
+    "hook_changes": [],
     "hook_scripts": [
       ".codex\\hooks\\khuym_session_start.mjs",
       ".codex\\hooks\\khuym_pre_tool_use.mjs",
